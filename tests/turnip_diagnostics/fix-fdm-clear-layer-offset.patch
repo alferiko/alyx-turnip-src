@@ -1,0 +1,19 @@
+--- a/src/freedreno/vulkan/tu_clear_blit.cc
++++ b/src/freedreno/vulkan/tu_clear_blit.cc
+@@ -4174,10 +4174,13 @@
+ 
+    VkExtent2D frag_area = tile->frag_areas[MIN2(state->view, views - 1)];
+    VkRect2D bin = bins[MIN2(state->view, views - 1)];
+-   /* On a7xx, GRAS_BIN_FOVEAT_OFFSET_* is applied per-viewport. We only use
+-    * viewport 0 in the 3d blit so use offset 0.
++   /* The clear shader writes the attachment layer. On A740, its hardware
++    * FDM offset follows that view even though the shader uses viewport 0.
++    * Use the same view for both the software transform and its hardware
++    * offset; view 0 is not interchangeable when the density maps differ.
+     */
+-   VkOffset2D hw_viewport_offset = hw_viewport_offsets[0];
++   VkOffset2D hw_viewport_offset =
++      hw_viewport_offsets[MIN2(state->view, views - 1)];
+ 
+    VkOffset2D offset = tu_fdm_per_bin_offset(frag_area, bin, common_bin_offset);
+ 

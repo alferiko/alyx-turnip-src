@@ -1,0 +1,92 @@
+--- a/src/freedreno/vulkan/tu_dynamic_rendering.cc
++++ b/src/freedreno/vulkan/tu_dynamic_rendering.cc
+@@ -121,17 +121,30 @@
+    struct tu_cmd_buffer **old_cmds = *cmds_ptr;
+ 
+    bool has_dynamic = false;
++   size_t new_count = *size;
+    for (unsigned i = 0; i < *size; i++) {
+-      if (old_cmds[i]->state.suspend_resume != SR_NONE) {
+-         has_dynamic = true;
+-         break;
+-      }
++      const auto sr = old_cmds[i]->state.suspend_resume;
++      has_dynamic |= sr != SR_NONE;
++      if (sr == SR_AFTER_PRE_CHAIN || sr == SR_IN_CHAIN_AFTER_PRE_CHAIN)
++         new_count++;
+    }
+ 
+    if (!has_dynamic)
+       return VK_SUCCESS;
+ 
+-   struct util_dynarray cmds = {0};
++   if (new_count > UINT32_MAX)
++      return VK_ERROR_OUT_OF_HOST_MEMORY;
++
++   /* Every completed suspended chain contributes exactly one extra command
++    * buffer. Allocate the final list once, before recording any extra work. */
++   struct tu_cmd_buffer **new_cmds = (struct tu_cmd_buffer **)
++      vk_alloc(&dev->vk.alloc, new_count * sizeof(*new_cmds),
++               alignof(struct tu_cmd_buffer *), VK_SYSTEM_ALLOCATION_SCOPE_DEVICE);
++   if (!new_cmds)
++      return VK_ERROR_OUT_OF_HOST_MEMORY;
++
++   uint32_t written = 0;
++   VkResult result = VK_SUCCESS;
+    struct tu_cmd_buffer *cmd_buffer = NULL;
+ 
+    for (unsigned i = 0; i < *size; i++) {
+@@ -156,13 +169,15 @@
+                        global_iova(cmd_buffer, dynamic_rendering_fence));
+          tu_cs_emit(&cmd_buffer->cs, dev->dynamic_rendering_fence);
+ 
+-         TU_CALLX(dev, tu_EndCommandBuffer)(tu_cmd_buffer_to_handle(cmd_buffer));
+-         util_dynarray_append(&cmds, cmd_buffer);
++         result = TU_CALLX(dev, tu_EndCommandBuffer)(tu_cmd_buffer_to_handle(cmd_buffer));
++         if (result != VK_SUCCESS)
++            goto fail;
++         new_cmds[written++] = cmd_buffer;
+          cmd_buffer = NULL;
+          break;
+       }
+ 
+-      util_dynarray_append(&cmds, old_cmds[i]);
++      new_cmds[written++] = old_cmds[i];
+ 
+       switch (old_cmds[i]->state.suspend_resume) {
+       case SR_NONE:
+@@ -171,9 +186,9 @@
+       case SR_IN_CHAIN:
+       case SR_IN_CHAIN_AFTER_PRE_CHAIN: {
+          assert(!cmd_buffer);
+-         VkResult result = get_cmd_buffer(dev, &cmd_buffer);
++         result = get_cmd_buffer(dev, &cmd_buffer);
+          if (result != VK_SUCCESS)
+-            return result;
++            goto fail;
+ 
+          const VkCommandBufferBeginInfo begin = {
+             .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+@@ -202,15 +217,12 @@
+       }
+    }
+ 
+-   struct tu_cmd_buffer **new_cmds = (struct tu_cmd_buffer **)
+-      vk_alloc(&dev->vk.alloc, cmds.size, alignof(struct tu_cmd_buffer *),
+-               VK_SYSTEM_ALLOCATION_SCOPE_DEVICE);
+-   if (!new_cmds)
+-      return VK_ERROR_OUT_OF_HOST_MEMORY;
+-   memcpy(new_cmds, cmds.data, cmds.size);
++   assert(written == new_count);
+    *cmds_ptr = new_cmds;
+-   *size = util_dynarray_num_elements(&cmds, struct tu_cmd_buffer *);
+-   util_dynarray_fini(&cmds);
+-
++   *size = written;
+    return VK_SUCCESS;
+-}
++
++fail:
++   vk_free(&dev->vk.alloc, new_cmds);
++   return result;
++}

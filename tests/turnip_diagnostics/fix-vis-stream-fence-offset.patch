@@ -1,0 +1,23 @@
+--- a/src/freedreno/vulkan/tu_queue.cc
++++ b/src/freedreno/vulkan/tu_queue.cc
+@@ -109,7 +109,7 @@
+    util_dynarray_foreach (&cmd->vis_stream_cs_bos,
+                           struct tu_vis_stream_patchpoint_cs,
+                           patchpoint_cs) {
+-      uint32_t *fence = (uint32_t *)patchpoint_cs->fence_bo.bo->map;
++      uint32_t *fence = (uint32_t *)tu_suballoc_bo_map(&patchpoint_cs->fence_bo);
+       if (*fence == 1) {
+          *fence = 0;
+          tu_cs_init_suballoc(cs, cmd->device, &patchpoint_cs->cs_bo);
+@@ -145,6 +145,11 @@
+    }
+ 
+    mtx_unlock(&cmd->device->vis_stream_suballocator_mtx);
++
++   /* The suballocator may return previously used storage. Only the GPU's
++    * completion write may make this patchpoint CS available for reuse.
++    */
++   *(uint32_t *)tu_suballoc_bo_map(&patchpoint_cs.fence_bo) = 0;
+ 
+    util_dynarray_append(&cmd->vis_stream_cs_bos, patchpoint_cs);
+ 

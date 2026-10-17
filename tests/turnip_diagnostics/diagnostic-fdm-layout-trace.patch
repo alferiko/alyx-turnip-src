@@ -1,0 +1,50 @@
+--- a/src/freedreno/vulkan/tu_cmd_buffer.cc
++++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
+@@ -3914,6 +3914,38 @@
+    if (has_fdm)
+       tiles = tu_calc_tile_config(cmd, vsc, fdm, fdm_offsets);
+
++   /* Diagnostic-only, bounded CPU layout snapshots. No GPU state changes. */
++   if (has_fdm && cmd->state.rp.drawcall_count >= 100) {
++      static uint32_t alyx_layout_seq = 0;
++      uint32_t seq = p_atomic_add_return(&alyx_layout_seq, 1);
++      if (seq <= 4096 && (seq - 1) % 128 == 0) {
++         unsigned count = vsc->tile_count.width * vsc->tile_count.height;
++         unsigned live = 0, merged = 0, invisible = 0;
++         for (unsigned i = 0; i < count; ++i) {
++            merged += !!tiles[i].merged_tile;
++            invisible += !tiles[i].visible_views;
++            live += !tiles[i].merged_tile && !!tiles[i].visible_views;
++         }
++         mesa_logi("ALYX_FDM_GRID seq=%u fb=%ux%u bin=%ux%u grid=%ux%u draws=%u hwbin=%u tiles=%u live=%u merged=%u invisible=%u views=%u",
++                   seq, cmd->state.framebuffer->width, cmd->state.framebuffer->height,
++                   tiling->tile0.width, tiling->tile0.height,
++                   vsc->tile_count.width, vsc->tile_count.height,
++                   cmd->state.rp.drawcall_count, unsigned(use_hw_binning(cmd)),
++                   count, live, merged, invisible, tu_fdm_num_layers(cmd));
++         for (unsigned i = 0; i < count; ++i) {
++            if (tiles[i].merged_tile || !tiles[i].visible_views) continue;
++            for (unsigned v = 0; v < tu_fdm_num_layers(cmd); ++v) {
++               if (!(tiles[i].visible_views & (1u << v))) continue;
++               mesa_logi("ALYX_FDM_TILE seq=%u i=%u view=%u pos=%d,%d extent=%u,%u gmem=%u,%u frag=%u,%u",
++                         seq, i, v, tiles[i].pos.x, tiles[i].pos.y,
++                         tiles[i].sysmem_extent.width, tiles[i].sysmem_extent.height,
++                         tiles[i].gmem_extent.width, tiles[i].gmem_extent.height,
++                         tiles[i].frag_areas[v].width, tiles[i].frag_areas[v].height);
++            }
++         }
++      }
++   }
++
+    /* Create gmem stores now (at EndRenderPass time)) because they needed to
+     * know whether to allow their conditional execution, which was tied to a
+     * state that was known only at the end of the renderpass.  They will be
+@@ -4380,7 +4412,7 @@
+    tu_cs_begin(&cmd_buffer->draw_epilogue_cs);
+
+    if (cmd_buffer->vk.level == VK_COMMAND_BUFFER_LEVEL_PRIMARY) {
+-      if (u_trace_enabled(&cmd_buffer->device->trace_context)) {
++      if (false && u_trace_enabled(&cmd_buffer->device->trace_context)) {
+          trace_start_cmd_buffer(&cmd_buffer->trace, &cmd_buffer->cs,
+                                 cmd_buffer, tu_env_debug_as_string(),
+                                 ir3_shader_debug_as_string());

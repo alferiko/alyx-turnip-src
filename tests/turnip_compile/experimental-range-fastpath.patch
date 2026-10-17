@@ -1,0 +1,48 @@
+--- a/src/compiler/nir/nir_range_analysis.c
++++ b/src/compiler/nir/nir_range_analysis.c
+@@ -1378,6 +1378,12 @@
+ fp_class_mask
+ nir_analyze_fp_class(nir_fp_analysis_state *fp_state, const nir_def *def)
+ {
++   /* The generic analyzer would return this same root immediately. Avoid
++    * constructing its query/result stacks for an already known value. */
++   uint32_t cached;
++   if (fp_lookup(fp_state, def->index, &cached))
++      return cached;
++
+    struct fp_query query_alloc[64];
+    uint32_t result_alloc[64];
+ 
+@@ -2156,6 +2162,15 @@
+ nir_unsigned_upper_bound(nir_shader *shader, struct hash_table *range_ht,
+                          nir_scalar scalar)
+ {
++   /* Constant queries are deliberately not inserted into range_ht. */
++   if (nir_scalar_is_const(scalar))
++      return nir_scalar_as_uint(scalar);
++
++   struct scalar_query root = { .scalar = scalar };
++   uint32_t cached;
++   if (scalar_lookup(range_ht, get_scalar_key(&root.head), &cached))
++      return cached;
++
+    struct scalar_query query_alloc[16];
+    uint32_t result_alloc[16];
+ 
+@@ -2629,6 +2644,16 @@
+ unsigned
+ nir_def_num_lsb_zero(struct hash_table *numlsb_ht, nir_scalar def)
+ {
++   if (nir_scalar_is_const(def)) {
++      uint64_t value = nir_scalar_as_uint(def);
++      return value ? ffsll(value) - 1 : def.def->bit_size;
++   }
++
++   struct scalar_query root = { .scalar = def };
++   uint32_t cached;
++   if (scalar_lookup(numlsb_ht, get_scalar_key(&root.head), &cached))
++      return cached;
++
+    struct scalar_query query_alloc[16];
+    uint32_t result_alloc[16];
+ 

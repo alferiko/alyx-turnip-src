@@ -1,0 +1,15 @@
+--- a/src/freedreno/vulkan/tu_cmd_buffer.cc
++++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
+@@ -1807,6 +1807,12 @@
+             (tile->subsampled_views == tile->visible_views &&
+              !tile->subsampled_border);
+
++         /* Preserve our empty-FDM STORE workaround for both attachment kinds. */
++         if (cmd->state.rp.drawcall_count == 0) {
++            non_subsampled_use_fast_store = false;
++            subsampled_use_fast_store = false;
++         }
++
+          tu7_set_pred_mask(cs, (1u << TU_PREDICATE_SUBSAMPLED_FAST_STORE) |
+                                (1u << TU_PREDICATE_SUBSAMPLED_NO_FAST_STORE),
+                                (1u << (subsampled_use_fast_store ?

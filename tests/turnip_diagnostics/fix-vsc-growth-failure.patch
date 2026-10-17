@@ -1,0 +1,36 @@
+--- a/src/freedreno/vulkan/tu_queue.cc
++++ b/src/freedreno/vulkan/tu_queue.cc
+@@ -195,15 +195,29 @@
+ 
+    if (!dev->vis_stream_bo || max_size > dev->vis_stream_size ||
+        min_vis_stream_count > dev->vis_stream_count) {
+-      dev->vis_stream_count = MAX2(dev->vis_stream_count,
+-                                   min_vis_stream_count);
+-      dev->vis_stream_size = MAX2(dev->vis_stream_size, max_size);
++      const uint32_t new_count = MAX2(dev->vis_stream_count,
++                                       min_vis_stream_count);
++      const uint32_t new_size = MAX2(dev->vis_stream_size, max_size);
+       if (dev->vis_stream_bo)
+          tu_bo_finish(dev, dev->vis_stream_bo);
++
++      /* Drop device ownership and layout together. Allocation failure leaves
++       * its output unchanged; the old BO may be freed, or still referenced by
++       * earlier command buffers but too small for this submission.
++       * Keep release-before-allocate to avoid increasing peak memory. */
++      dev->vis_stream_bo = NULL;
++      dev->vis_stream_size = 0;
++      dev->vis_stream_count = 0;
+       result = tu_bo_init_new(dev, &dev->vk.base, &dev->vis_stream_bo,
+-                              dev->vis_stream_size * dev->vis_stream_count, 
++                              new_size * new_count,
+                               TU_BO_ALLOC_INTERNAL_RESOURCE,
+                               "visibility stream");
++      if (result != VK_SUCCESS) {
++         mtx_unlock(&dev->vis_stream_mtx);
++         return result;
++      }
++      dev->vis_stream_size = new_size;
++      dev->vis_stream_count = new_count;
+    }
+ 
+    bo = dev->vis_stream_bo;

@@ -1,0 +1,2755 @@
+--- a/src/freedreno/fdl/freedreno_lrz_layout.h
++++ b/src/freedreno/fdl/freedreno_lrz_layout.h
+@@ -21,8 +21,38 @@
+    uint32_t lrz_buffer_size;
+    uint32_t lrz_fc_offset;
+    uint32_t lrz_fc_size;
++   /* What the fast-clear buffer would need to cover the whole LRZ image. When
++    * this exceeds the flag RAM, lrz_fc_size is the covered prefix and the
++    * blocks past it have to be cleared by other means.
++    */
++   uint32_t lrz_fc_full_size;
++   /* Per-layer fast-clear stride. Needed to work out which LRZ tiles a
++    * partially-covering flag RAM leaves behind.
++    */
++   uint32_t lrz_fc_layer_stride;
+    uint32_t lrz_total_size;
+ };
++
++/* Offset of the first value in the LRZ buffer that the fast-clear buffer does
++ * not cover, or lrz_layer_size if fully covered.
++ *
++ * The flag buffer is addressed as a flat byte range and the hardware only reads
++ * the first lrz_fc_size bytes of it, with each layer's bits starting at a
++ * 64-byte aligned stride. One fast-clear block covers 64 LRZ tiles (or 128
++ * bytes in the LRZ image).
++ */
++static inline uint32_t
++fdl6_lrz_fc_first_uncovered_offset(const struct fdl_lrz_layout *lrz, uint32_t layer)
++{
++   uint32_t layer_start = layer * lrz->lrz_fc_layer_stride;
++
++   if (layer_start >= lrz->lrz_fc_size)
++      return 0; /* nothing of this layer is covered */
++
++   uint32_t covered_bytes = lrz->lrz_fc_size - layer_start;
++   return MIN2(covered_bytes * 8 /* bits/byte */ *
++      128 /* bytes/fast clear block */, lrz->lrz_layer_size);
++}
+ 
+ void
+ fdl5_lrz_layout_init(struct fdl_lrz_layout *lrz_layout, uint32_t width,
+@@ -51,66 +81,46 @@
+    }
+ }
+ 
++static uint32_t
++fdl6_lrz_get_fc_layer_pitch(uint32_t lrz_layer_pitch)
++{
++   return align(lrz_layer_pitch >> 7, 512) / 8;
++}
++
++/* Size the fast-clear buffer would need to cover the whole LRZ image, before
++ * the flag-RAM limit is applied.
++ */
++static inline uint32_t
++fdl6_lrz_get_full_fc_size(uint32_t lrz_layer_pitch, uint32_t array_layers)
++{
++   unsigned fc_layer_byte_pitch = fdl6_lrz_get_fc_layer_pitch(lrz_layer_pitch);
++
++   return fc_layer_byte_pitch * array_layers;
++}
++
+ template <chip CHIP>
+-static uint32_t
+-fdl6_lrz_get_fc_size(uint32_t width, uint32_t height, uint32_t nr_samples,
+-                     uint32_t array_layers)
+-{
+-   fdl6_lrz_get_super_sampled_size(&width, &height, nr_samples);
+-
+-   unsigned nblocksx = DIV_ROUND_UP(DIV_ROUND_UP(width, 8), 16);
+-   unsigned nblocksy = DIV_ROUND_UP(DIV_ROUND_UP(height, 8), 4);
+-
++static inline uint32_t
++fdl6_lrz_get_fc_size(uint32_t lrz_layer_pitch, uint32_t array_layers)
++{
+    uint32_t lrz_fc_size =
+-      DIV_ROUND_UP(nblocksx * nblocksy, 8) * array_layers;
+-
+-   /* Fast-clear buffer cannot be larger than 512 bytes on A6XX and 1024 bytes
+-    * on A7XX (HW limitation)
++      fdl6_lrz_get_full_fc_size(lrz_layer_pitch, array_layers);
++
++   /* The flag RAM holds at most 512 bytes on A6XX, 1024 on A7XX and 2048 on
++    * A8XX. Past that only a prefix of the LRZ image can be fast-cleared; the
++    * caller clears the rest (see fdl6_lrz_fc_first_uncovered_offset).
+     */
+-   if (lrz_fc_size > fd_lrzfc_layout<CHIP>::FC_SIZE) {
+-      lrz_fc_size = 0;
+-   }
++   lrz_fc_size = MIN2(lrz_fc_size, (uint32_t) fd_lrzfc_layout<CHIP>::FC_SIZE);
+ 
+    return lrz_fc_size;
+ }
+ 
+-struct fdl_lrz_fdm_extra_size {
+-   uint32_t extra_width;
+-   uint32_t extra_height;
+-};
+-
+-/* Get maximum size of the extra tile for VK_QCOM_fragment_density_map_offset,
+- * that keeps LRZ fast-clear enabled, if possible.
+- */
+-template <chip CHIP>
+-static struct fdl_lrz_fdm_extra_size
+-fdl6_lrz_get_max_fdm_extra_size(const struct fd_dev_info *dev_info,
+-                                uint32_t width, uint32_t height,
+-                                uint32_t nr_samples, uint32_t array_layers)
+-{
+-   constexpr uint32_t MIN_TILE_SIZE_FOR_FDM_OFFSET = 192;
+-
+-   if (fdl6_lrz_get_fc_size<CHIP>(width, height, nr_samples, array_layers) == 0) {
+-      return {dev_info->tile_max_w, dev_info->tile_max_h};
+-   }
+-
+-   uint32_t max_extra_size = MIN2(dev_info->tile_max_w, dev_info->tile_max_h);
+-   uint32_t step = MIN2(dev_info->gmem_align_w, dev_info->gmem_align_h);
+-   uint32_t min_extra_size = MAX2(step, MIN_TILE_SIZE_FOR_FDM_OFFSET);
+-
+-   while (max_extra_size > min_extra_size) {
+-      if (fdl6_lrz_get_fc_size<CHIP>(width + max_extra_size,
+-                                     height + max_extra_size, nr_samples,
+-                                     array_layers) != 0) {
+-
+-         return {util_round_down_npot(max_extra_size, dev_info->gmem_align_w),
+-                 util_round_down_npot(max_extra_size, dev_info->gmem_align_h)};
+-      }
+-
+-      max_extra_size -= step;
+-   }
+-
+-   return {dev_info->tile_max_w, dev_info->tile_max_h};
++/* Whether the flag RAM covers the whole LRZ image, i.e. no remainder has to be
++ * cleared separately.
++ */
++static inline bool
++fdl6_lrz_fc_fully_covered(const struct fdl_lrz_layout *lrz_layout)
++{
++   return lrz_layout->lrz_fc_size >= lrz_layout->lrz_fc_full_size;
+ }
+ 
+ template <chip CHIP>
+@@ -191,9 +201,12 @@
+    lrz_layout->lrz_buffer_size = lrz_layout->lrz_layer_size * array_layers;
+ 
+    /* Fast-clear buffer is 1bit/block */
+-   lrz_layout->lrz_fc_size = fdl6_lrz_get_fc_size<CHIP>(
+-      layout->width0 + extra_width, layout->height0 + extra_height,
+-      layout->nr_samples, array_layers);
++   lrz_layout->lrz_fc_size =
++      fdl6_lrz_get_fc_size<CHIP>(lrz_layout->lrz_layer_size, array_layers);
++   lrz_layout->lrz_fc_full_size =
++      fdl6_lrz_get_full_fc_size(lrz_layout->lrz_layer_size, array_layers);
++   lrz_layout->lrz_fc_layer_stride =
++      fdl6_lrz_get_fc_layer_pitch(lrz_layout->lrz_layer_size);
+ 
+    if (!dev_info->props.enable_lrz_fast_clear) {
+       lrz_layout->lrz_fc_size = 0;
+@@ -219,6 +232,52 @@
+       lrz_layout->lrz_total_size = 0;
+    }
+ }
++
++struct fdl_lrz_fdm_extra_size {
++   uint32_t extra_width;
++   uint32_t extra_height;
++};
++
++/* Get maximum size of the extra tile for VK_QCOM_fragment_density_map_offset,
++ * that keeps LRZ fast-clear enabled, if possible.
++ */
++template <chip CHIP>
++static struct fdl_lrz_fdm_extra_size
++fdl6_lrz_get_max_fdm_extra_size(const struct fd_dev_info *dev_info,
++                                uint32_t width, uint32_t height,
++                                uint32_t nr_samples, uint32_t array_layers)
++{
++   constexpr uint32_t MIN_TILE_SIZE_FOR_FDM_OFFSET = 192;
++
++   struct fdl_layout layout = {
++      .width0 = width,
++      .height0 = height,
++      .nr_samples = nr_samples,
++   };
++   struct fdl_lrz_layout lrz_layout;
++   fdl6_lrz_layout_init<CHIP>(&lrz_layout, &layout, 0, 0, dev_info, 0,
++                              array_layers);
++   if (!fdl6_lrz_fc_fully_covered(&lrz_layout)) {
++      return {dev_info->tile_max_w, dev_info->tile_max_h};
++   }
++
++   uint32_t max_extra_size = MIN2(dev_info->tile_max_w, dev_info->tile_max_h);
++   uint32_t step = MIN2(dev_info->gmem_align_w, dev_info->gmem_align_h);
++   uint32_t min_extra_size = MAX2(step, MIN_TILE_SIZE_FOR_FDM_OFFSET);
++
++   while (max_extra_size > min_extra_size) {
++      fdl6_lrz_layout_init<CHIP>(&lrz_layout, &layout, max_extra_size,
++                                 max_extra_size, dev_info, 0, array_layers);
++      if (fdl6_lrz_fc_fully_covered(&lrz_layout)) {
++         return {util_round_down_npot(max_extra_size, dev_info->gmem_align_w),
++                 util_round_down_npot(max_extra_size, dev_info->gmem_align_h)};
++      }
++
++      max_extra_size -= step;
++   }
++
++   return {dev_info->tile_max_w, dev_info->tile_max_h};
++}
+ #endif
+ 
+ #endif
+--- a/src/freedreno/vulkan/tu_autotune.cc
++++ b/src/freedreno/vulkan/tu_autotune.cc
+@@ -425,6 +425,13 @@
+    alignas(16) uint64_t samples_end;
+    uint64_t ts_start;
+    uint64_t ts_end;
++   /* Binning pass timestamps, only written for GMEM with HW binning. Zero for
++    * SYSMEM or GMEM without binning. Added to (ts_end - ts_start) to get the
++    * true total GMEM cost, including the binning pass that precedes fragment
++    * rendering.  For concurrent binning (CB) this slightly over-counts since
++    * BV and BR overlap, but that is acceptable for the autotuner's purposes. */
++   uint64_t ts_binning_start;
++   uint64_t ts_binning_end;
+ };
+ 
+ /* Per-tile values for GMEM rendering, this structure is appended to the end of rp_gpu_data for each tile. */
+@@ -639,7 +646,7 @@
+    {
+       assert(config.test(metric_flag::TS));
+       rp_gpu_data &gpu = get_gpu_data();
+-      return gpu.ts_end - gpu.ts_start;
++      return (gpu.ts_end - gpu.ts_start) + (gpu.ts_binning_end - gpu.ts_binning_start);
+    }
+ 
+    /* The amount of cycles spent in the longest tile. This is used to calculate the average draw duration for
+@@ -665,6 +672,20 @@
+    }
+ 
+    /** CS Emission **/
++
++   void emit_binning_start(struct tu_cs *cs)
++   {
++      assert(map && bo.iova);
++      if (config.test(metric_flag::TS))
++         emit_metric_timestamp(cs, bo.iova + offsetof(rp_gpu_data, ts_binning_start));
++   }
++
++   void emit_binning_end(struct tu_cs *cs)
++   {
++      assert(map && bo.iova);
++      if (config.test(metric_flag::TS))
++         emit_metric_timestamp(cs, bo.iova + offsetof(rp_gpu_data, ts_binning_end));
++   }
+ 
+    void emit_rp_start(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
+    {
+@@ -813,7 +834,12 @@
+     */
+ 
+    struct PACKED packed_att_properties {
+-      uint64_t iova;
++      /* Use img_id (stable monotonic creation counter) + view offset rather than
++       * IOVA, so that the hash is consistent across separate process runs of the
++       * same API call sequence (e.g. apitrace replay).
++       */
++      uint64_t img_id;
++      uint32_t view_offset;
+       bool load;
+       bool store;
+       bool load_stencil;
+@@ -827,8 +853,14 @@
+       *ptr++ = framebuffer->layers;
+ 
+       for (unsigned i = 0; i < pass->attachment_count; i++) {
++         /* Every image reaching a render pass must have an identity (see
++          * tu_image_id_mode); 0 means a new image path missed assigning one.
++          */
++         assert(cmd->state.attachments[i]->image->id != 0);
++
+          packed_att_properties props = {
+-            .iova = cmd->state.attachments[i]->image->iova + cmd->state.attachments[i]->view.offset,
++            .img_id = cmd->state.attachments[i]->image->id,
++            .view_offset = cmd->state.attachments[i]->view.offset,
+             .load = pass->attachments[i].load,
+             .store = pass->attachments[i].store,
+             .load_stencil = pass->attachments[i].load_stencil,
+@@ -847,7 +879,8 @@
+     * cases, while only extreme cases need to allocate on the heap.
+     */
+    size_t data_count = 3 + (pass->attachment_count * sizeof(packed_att_properties) / sizeof(uint32_t));
+-   constexpr size_t STACK_MAX_DATA_COUNT = 3 + (5 * 3); /* in u32 units. */
++   constexpr size_t STACK_MAX_DATA_COUNT =
++      3 + (5 * (sizeof(packed_att_properties) / sizeof(uint32_t))); /* in u32 units, up to 5 attachments. */
+ 
+    if (data_count <= STACK_MAX_DATA_COUNT) {
+       /* If the data is small enough, we can use the stack. */
+@@ -1968,8 +2001,7 @@
+ /** RP-level CS emissions **/
+ 
+ void
+-tu_autotune::begin_renderpass(
+-   struct tu_cmd_buffer *cmd, struct tu_cs *cs, rp_ctx_t rp_ctx, bool sysmem, uint32_t tile_count)
++tu_autotune::init_renderpass(rp_ctx_t rp_ctx, bool sysmem, uint32_t tile_count)
+ {
+    if (!rp_ctx)
+       return;
+@@ -1978,7 +2010,37 @@
+    assert(!sysmem || tile_count == 0);
+ 
+    rp_ctx->allocate(sysmem, tile_count);
++}
++
++void
++tu_autotune::begin_renderpass(struct tu_cmd_buffer *cmd, struct tu_cs *cs, rp_ctx_t rp_ctx)
++{
++   if (!rp_ctx)
++      return;
++
+    rp_ctx->emit_rp_start(cmd, cs);
++}
++
++void
++tu_autotune::begin_binning(struct tu_cs *cs, rp_ctx_t rp_ctx)
++{
++   if (!rp_ctx)
++      return;
++
++   assert(!rp_ctx->sysmem);
++
++   rp_ctx->emit_binning_start(cs);
++}
++
++void
++tu_autotune::end_binning(struct tu_cs *cs, rp_ctx_t rp_ctx)
++{
++   if (!rp_ctx)
++      return;
++
++   assert(!rp_ctx->sysmem);
++
++   rp_ctx->emit_binning_end(cs);
+ }
+ 
+ void
+--- a/src/freedreno/vulkan/tu_autotune.h
++++ b/src/freedreno/vulkan/tu_autotune.h
+@@ -324,10 +324,16 @@
+     */
+    void disable_preempt_optimize();
+ 
+-   void
+-   begin_renderpass(struct tu_cmd_buffer *cmd, struct tu_cs *cs, rp_ctx_t rp_ctx, bool sysmem, uint32_t tile_count);
+-
++   /* Allocates the BO for this render pass. Must be called before any GPU
++    * emission (begin_renderpass, begin_binning).
++    */
++   void init_renderpass(rp_ctx_t rp_ctx, bool sysmem, uint32_t tile_count);
++
++   void begin_renderpass(struct tu_cmd_buffer *cmd, struct tu_cs *cs, rp_ctx_t rp_ctx);
+    void end_renderpass(struct tu_cmd_buffer *cmd, struct tu_cs *cs, rp_ctx_t rp_ctx);
++
++   void begin_binning(struct tu_cs *cs, rp_ctx_t rp_ctx);
++   void end_binning(struct tu_cs *cs, rp_ctx_t rp_ctx);
+ 
+    void begin_tile(struct tu_cmd_buffer *cmd, struct tu_cs *cs, rp_ctx_t rp_ctx, uint32_t tile_idx);
+ 
+--- a/src/freedreno/vulkan/tu_clear_blit.cc
++++ b/src/freedreno/vulkan/tu_clear_blit.cc
+@@ -2243,6 +2243,7 @@
+     * writing whole cache lines we assume to be 64 bytes.
+     */
+    tu_emit_event_write<CHIP>(cmd, &cmd->cs, FD_CACHE_CLEAN);
++   tu_cs_emit_wfi(cs);
+ 
+    const unsigned lrz_buffers = CHIP >= A7XX ? 2 : 1;
+    for (unsigned i = 0; i < lrz_buffers; i++) {
+@@ -2271,6 +2272,104 @@
+    trace_end_slow_clear_lrz(&cmd->trace, &cmd->cs);
+ }
+ TU_GENX(tu6_clear_lrz);
++
++/* Clear only the LRZ rows that the fast-clear buffer does not cover.
++ *
++ * When the flag RAM is too small for the whole LRZ image we keep fast clear
++ * enabled for the prefix it does cover and clear the rest here. Blocks with no
++ * flag bit fall back to reading LRZ memory, so writing the depth clear value
++ * into those rows is what makes the result correct -- and it is also correct if
++ * the hardware instead reads a stale flag bit and takes it as "dirty", since
++ * either path then lands on cleared LRZ.
++ */
++template <chip CHIP>
++void
++tu6_clear_lrz_partial(struct tu_cmd_buffer *cmd,
++                      struct tu_cs *cs,
++                      struct tu_image *image,
++                      const VkClearValue *value)
++{
++   const struct blit_ops *ops = &r2d_ops<CHIP>;
++   const struct fdl_lrz_layout *lrz = &image->lrz_layout;
++
++   /* This runs after FD_LRZ_CLEAR, so unlike tu6_clear_lrz there is LRZ work
++    * already in flight. The fast clear is processed by the LRZ block and its
++    * cache is separate from the CCU these writes go through, so without an
++    * explicit LRZ flush and an idle wait the two race and clobber each other at
++    * cache-line granularity -- which shows up as scattered, run-to-run-varying
++    * over-culling rather than a clean missing region.
++    *
++    * Emit into `cs`, the same stream as the blit below, so the ordering is
++    * actually guaranteed.
++    */
++   tu_emit_event_write<CHIP>(cmd, cs, FD_LRZ_FLUSH);
++   tu_emit_event_write<CHIP>(cmd, cs, FD_CACHE_CLEAN);
++   cmd->state.cache.flush_bits |= TU_CMD_FLAG_WAIT_FOR_IDLE;
++   tu_emit_cache_flush<CHIP>(cmd);
++
++   const unsigned lrz_buffers = CHIP >= A7XX ? 2 : 1;
++   bool any = false;
++
++   for (unsigned i = 0; i < lrz_buffers; i++) {
++      for (unsigned layer = 0; layer < image->vk.array_layers; layer++) {
++         uint32_t first = fdl6_lrz_fc_first_uncovered_offset(lrz, layer);
++         if (first >= lrz->lrz_layer_size)
++            continue;
++
++         const uint32_t clear_block_bytes = 2048;
++         /* LRZ FC layer stride alignment is 64 bytes, or 512 bits. Each bit
++          * is a FC block that covers 128 bytes.
++          */
++         assert(first % (512 * 128) == 0);
++         /* LRZ layer stride is a multiple of 2048 bytes on all gens currently.
++          */
++         assert(lrz->lrz_layer_size % clear_block_bytes == 0);
++
++         /* The LRZ FC layout is based on the LRZ layout. Each bit in the LRZ
++          * fast-clear RAM corresponds to 1 fast-clear block of 128 bytes, or
++          * 64 LRZ tiles. Therefore we just need to clear from the first
++          * uncovered block to the end.
++          */
++         uint64_t iova = image->iova + lrz->lrz_offset +
++                         i * lrz->lrz_buffer_size +
++                         (uint64_t) layer * lrz->lrz_layer_size +
++                         (uint64_t) first;
++         uint64_t size_remaining =
++            lrz->lrz_layer_size - first;
++         assert(size_remaining % clear_block_bytes == 0);
++
++         if (!any) {
++            ops->setup(cmd, cs, PIPE_FORMAT_Z16_UNORM, PIPE_FORMAT_Z16_UNORM,
++                       VK_IMAGE_ASPECT_DEPTH_BIT, 0, true, false,
++                       VK_SAMPLE_COUNT_1_BIT, VK_SAMPLE_COUNT_1_BIT);
++            ops->clear_value(cmd, cs, PIPE_FORMAT_Z16_UNORM, value);
++            any = true;
++         }
++
++         while (size_remaining > 0) {
++            uint32_t blocks = MIN2(size_remaining / clear_block_bytes,
++                                   0x4000);
++
++            ops->dst_buffer(cs, PIPE_FORMAT_Z16_UNORM, iova,
++                            clear_block_bytes, PIPE_FORMAT_Z16_UNORM);
++            ops->coords(cmd, cs, (VkOffset2D) {}, blt_no_coord,
++                        (VkExtent2D) { clear_block_bytes / 2, blocks });
++            ops->run(cmd, cs);
++
++            size_remaining -= blocks * clear_block_bytes;
++            iova += blocks * clear_block_bytes;
++         }
++      }
++   }
++
++   if (any)
++      ops->teardown(cmd, cs);
++
++   cmd->state.cache.flush_bits |=
++      TU_CMD_FLAG_CCU_CLEAN_COLOR | TU_CMD_FLAG_CACHE_INVALIDATE |
++      TU_CMD_FLAG_WAIT_FOR_IDLE;
++}
++TU_GENX(tu6_clear_lrz_partial);
+ 
+ template <chip CHIP>
+ void
+@@ -3714,6 +3813,10 @@
+ 
+    ops->teardown(cmd, cs);
+ 
++   if (dst_image->lrz_layout.lrz_total_size) {
++      tu_disable_lrz<CHIP>(cmd, &cmd->cs, dst_image);
++   }
++
+    trace_end_resolve_image(&cmd->trace, &cmd->cs);
+ }
+ TU_GENX(tu_CmdResolveImage2);
+@@ -3869,24 +3972,31 @@
+    uint32_t level_count = vk_image_subresource_level_count(&image->vk, range);
+    uint32_t layer_count = vk_image_subresource_layer_count(&image->vk, range);
+    struct tu_cs *cs = &cmd->cs;
++
++   if (image->layout[0].depth0 > 1) {
++      assert(layer_count == 1);
++      assert(range->baseArrayLayer == 0);
++   }
++
++   const struct blit_ops *ops = image->layout[0].nr_samples > 1 ? &r3d_ops<CHIP> : &r2d_ops<CHIP>;
++   const bool e5b9g9r9_as_u32 =
++      image->vk.format == VK_FORMAT_E5B9G9R9_UFLOAT_PACK32 &&
++      ops == &r2d_ops<CHIP>;
++
+    enum pipe_format format;
+-   if (image->vk.format == VK_FORMAT_E5B9G9R9_UFLOAT_PACK32) {
++   if (e5b9g9r9_as_u32) {
+       format = PIPE_FORMAT_R32_UINT;
+    } else {
+       format = tu_aspects_to_plane(image->vk.format, aspect_mask);
+    }
+-
+-   if (image->layout[0].depth0 > 1) {
+-      assert(layer_count == 1);
+-      assert(range->baseArrayLayer == 0);
+-   }
+-
+-   const struct blit_ops *ops = image->layout[0].nr_samples > 1 ? &r3d_ops<CHIP> : &r2d_ops<CHIP>;
++   if (format == PIPE_FORMAT_R64_SINT || format == PIPE_FORMAT_R64_UINT) {
++      format = PIPE_FORMAT_R32G32_UINT;
++   }
+ 
+    ops->setup(cmd, cs, format, format, aspect_mask, 0, true, image->layout[0].ubwc,
+               (VkSampleCountFlagBits) image->layout[0].nr_samples,
+               (VkSampleCountFlagBits) image->layout[0].nr_samples);
+-   if (image->vk.format == VK_FORMAT_E5B9G9R9_UFLOAT_PACK32)
++   if (e5b9g9r9_as_u32)
+       ops->clear_value(cmd, cs, PIPE_FORMAT_R9G9B9E5_FLOAT, clear_value);
+    else
+       ops->clear_value(cmd, cs, format, clear_value);
+@@ -5241,7 +5351,8 @@
+    const struct fdl6_view *fdl_view = tu_image_view_fdl_view(iview, separate_stencil);
+ 
+    for_each_layer(i, attachment->used_views, cmd->state.framebuffer->layers) {
+-      if (cmd->state.pass->has_fdm && cmd->state.fdm_subsampled) {
++      if (cmd->state.pass->has_fdm &&
++          (iview->image->vk.create_flags & VK_IMAGE_CREATE_SUBSAMPLED_BIT_EXT)) {
+             struct apply_blit_scissor_state state = {
+                .view = i,
+                .render_area = scissor_per_layer ?
+@@ -5701,7 +5812,7 @@
+     * conditionally use A2D for the unaligned blits at the edge. Just return
+     * false here.
+     */
+-   if (cmd->state.fdm_subsampled)
++   if (iview->image->vk.create_flags & VK_IMAGE_CREATE_SUBSAMPLED_BIT_EXT)
+       return false;
+ 
+    for (unsigned i = 0; i < render_area_count; i++) {
+@@ -5775,6 +5886,9 @@
+ 
+    for (unsigned i = 0; i < cmd->state.pass->subpass_count; i++) {
+       const struct tu_subpass *subpass = &cmd->state.pass->subpasses[i];
++      if (subpass->custom_resolve)
++         cmd->state.gmem_layout = TU_GMEM_LAYOUT_AVOID_CCU;
++
+       for (unsigned j = 0; j < subpass->resolve_count; j++) {
+          uint32_t a = subpass->resolve_attachments[j].attachment;
+          if (a == VK_ATTACHMENT_UNUSED)
+@@ -5785,8 +5899,6 @@
+                subpass->color_attachments[j].attachment;
+          if (tu_attachment_store_mismatched_mutability(cmd, a, gmem_a))
+             cmd->state.gmem_layout = TU_GMEM_LAYOUT_AVOID_CCU;
+-         if (subpass->custom_resolve)
+-            cmd->state.gmem_layout = TU_GMEM_LAYOUT_AVOID_CCU;
+       }
+    }
+ 
+@@ -5798,6 +5910,7 @@
+ 
+ struct apply_store_coords_state {
+    unsigned view;
++   bool subsampled;
+ };
+ 
+ template <chip CHIP>
+@@ -5839,8 +5952,8 @@
+                       GRAS_A2D_SRC_YMAX(CHIP, 0));
+    } else {
+       VkOffset2D start =
+-         tile->subsampled ? tile->subsampled_pos[view].offset : bin.offset;
+-      if (tile->subsampled_views & (1u << view)) {
++         (state->subsampled && tile->subsampled) ? tile->subsampled_pos[view].offset : bin.offset;
++      if (state->subsampled && (tile->subsampled_views & (1u << view))) {
+          /* Subsampled blits don't scale up the bin, and go to the subsampled
+           * destination.
+           */
+@@ -5964,11 +6077,20 @@
+       tu_begin_load_store_cond_exec(cmd, cs, false);
+    }
+ 
++   bool fdm_subsampled = dst_iview->image->vk.create_flags &
++      VK_IMAGE_CREATE_SUBSAMPLED_BIT_EXT;
++   unsigned fast_store_predicate = fdm_subsampled ?
++      TU_PREDICATE_SUBSAMPLED_FAST_STORE :
++      TU_PREDICATE_NON_SUBSAMPLED_FAST_STORE;
++   unsigned no_fast_store_predicate = fdm_subsampled ?
++      TU_PREDICATE_SUBSAMPLED_NO_FAST_STORE :
++      TU_PREDICATE_NON_SUBSAMPLED_NO_FAST_STORE;
++
+    /* use fast path when render area is aligned, except for unsupported resolve cases */
+    if (use_fast_path) {
+       if (fast_path_conditional) {
+          tu_cond_exec_start(cs, CP_COND_REG_EXEC_0_MODE(PRED_TEST) |
+-                            CP_COND_REG_EXEC_0_PRED_BIT(TU_PREDICATE_FAST_STORE));
++                            CP_COND_REG_EXEC_0_PRED_BIT(fast_store_predicate));
+       }
+ 
+       if (store_common)
+@@ -5994,7 +6116,7 @@
+ 
+    if (fast_path_conditional) {
+       tu_cond_exec_start(cs, CP_COND_REG_EXEC_0_MODE(PRED_TEST) |
+-                         CP_COND_REG_EXEC_0_PRED_BIT(TU_PREDICATE_NO_FAST_STORE));
++                         CP_COND_REG_EXEC_0_PRED_BIT(no_fast_store_predicate));
+    }
+ 
+    enum pipe_format src_format = vk_format_to_pipe_format(src->format);
+@@ -6036,7 +6158,7 @@
+          if (!cmd->state.pass->has_fdm) {
+             r2d_coords<CHIP>(cmd, cs, render_area->offset, render_area->offset,
+                              render_area->extent);
+-         } else if (!cmd->state.fdm_subsampled) {
++         } else if (!fdm_subsampled) {
+             /* Usually GRAS_2D_RESOLVE_CNTL_* clips the destination to the bin
+              * area and the coordinates span the entire render area, but for
+              * FDM we need to scale the coordinates so we need to take the
+@@ -6058,7 +6180,7 @@
+             if (!cmd->state.pass->has_fdm) {
+                r2d_coords<CHIP>(cmd, cs, render_area->offset, render_area->offset,
+                                 render_area->extent);
+-            } else if (!cmd->state.fdm_subsampled) {
++            } else if (!fdm_subsampled) {
+                tu_cs_emit_regs(cs,
+                                GRAS_A2D_SCISSOR_TL(CHIP, .x = render_area->offset.x,
+                                                          .y = render_area->offset.y,),
+@@ -6068,7 +6190,7 @@
+          }
+ 
+          if (cmd->state.pass->has_fdm) {
+-            if (cmd->state.fdm_subsampled) {
++            if (fdm_subsampled) {
+                struct apply_render_area_state state {
+                   .view = i,
+                   .render_area =
+@@ -6081,6 +6203,7 @@
+             }
+             struct apply_store_coords_state state = {
+                .view = i,
++               .subsampled = fdm_subsampled,
+             };
+             tu_create_fdm_bin_patchpoint(cmd, cs, 8, TU_FDM_SKIP_BINNING,
+                                          fdm_apply_store_coords<CHIP>, state);
+@@ -6149,16 +6272,18 @@
+ tu_blit_subsampled_apron(struct tu_cmd_buffer *cmd,
+                          struct tu_cs *cs,
+                          const struct tu_image_view *iview,
++                         bool store,
++                         bool store_stencil,
+                          unsigned layer,
+                          const VkRect2D *dst_coord,
+                          const tu_rect2d_float *src_coord,
+                          unsigned count)
+ {
+    if (iview->image->vk.format == VK_FORMAT_D32_SFLOAT_S8_UINT) {
+-      blit_subsampled_apron<CHIP>(cmd, cs, iview, VK_FORMAT_D32_SFLOAT, layer,
+-                                  dst_coord, src_coord, count);
+-      blit_subsampled_apron<CHIP>(cmd, cs, iview, VK_FORMAT_S8_UINT, layer,
+-                                  dst_coord, src_coord, count);
++      if (store)
++         blit_subsampled_apron<CHIP>(cmd, cs, iview, VK_FORMAT_D32_SFLOAT, layer, dst_coord, src_coord, count);
++      if (store_stencil)
++         blit_subsampled_apron<CHIP>(cmd, cs, iview, VK_FORMAT_S8_UINT, layer, dst_coord, src_coord, count);
+    } else {
+       blit_subsampled_apron<CHIP>(cmd, cs, iview, iview->vk.format, layer,
+                                   dst_coord, src_coord, count);
+--- a/src/freedreno/vulkan/tu_clear_blit.h
++++ b/src/freedreno/vulkan/tu_clear_blit.h
+@@ -29,6 +29,11 @@
+ template <chip CHIP>
+ void
+ tu6_dirty_lrz_fc(struct tu_cmd_buffer *cmd, struct tu_cs *cs, struct tu_image* image);
++
++template <chip CHIP>
++void
++tu6_clear_lrz_partial(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
++                      struct tu_image *image, const VkClearValue *value);
+ 
+ template <chip CHIP>
+ void
+@@ -111,6 +116,8 @@
+ tu_blit_subsampled_apron(struct tu_cmd_buffer *cmd,
+                          struct tu_cs *cs,
+                          const struct tu_image_view *iview,
++                         bool store,
++                         bool store_stencil,
+                          unsigned layer,
+                          const VkRect2D *dst_coord,
+                          const tu_rect2d_float *src_coord,
+--- a/src/freedreno/vulkan/tu_cmd_buffer.cc
++++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
+@@ -584,11 +584,10 @@
+    struct tu_cs *cs = &cmd_buffer->draw_cs;
+    struct tu_cache_state *cache = &cmd_buffer->state.renderpass_cache;
+ 
++   if (cache->flush_bits & TU_CMD_FLAG_BLIT_CACHE_CLEAN) {
++      cmd_buffer->state.blit_cache_cleaned = true;
++   }
+    tu6_emit_flushes<CHIP>(cmd_buffer, cs, cache);
+-   if (cmd_buffer->state.renderpass_cache.flush_bits &
+-       TU_CMD_FLAG_BLIT_CACHE_CLEAN) {
+-      cmd_buffer->state.blit_cache_cleaned = true;
+-   }
+ }
+ TU_GENX(tu_emit_cache_flush_renderpass);
+ 
+@@ -635,14 +634,15 @@
+     * overwrite GMEM when sysmem operations are performed.
+     *
+     * The vast majority of GMEM rendering doesn't need any sysmem operations
+-    * but there are some cases where it is required. For example, when the
+-    * framebuffer isn't aligned to the tile size or with certain MSAA resolves.
++    * but there are some cases where it is required. For example:
++    * - Framebuffer isn't aligned to the tile size;
++    * - Certain MSAA resolves;
++    * - Custom shader resolves with color/depth outputs.
+     *
+     * To correctly handle these cases, we need to be able to switch between
+     * sysmem and GMEM rendering. We do this by allocating a carveout at the
+-    * end of GMEM for the color CCU (as none of these operations are depth)
+-    * which the color CCU offset is set to and the GMEM size available to the
+-    * GMEM layout calculations is adjusted accordingly.
++    * end of GMEM for the color CCU or color + depth CCU. The GMEM size
++    * available to the GMEM layout calculations is adjusted accordingly.
+     */
+    const struct fd6_gmem_config *cfg = gmem ?
+       &dev->physical_device->config_gmem :
+@@ -670,7 +670,7 @@
+       tu_cs_emit_regs(cs, RB_CCU_CACHE_CNTL(CHIP,
+          .depth_offset_hi = depth_offset_hi,
+          .color_offset_hi = color_offset_hi,
+-         .depth_cache_size = CCU_CACHE_SIZE_FULL,
++         .depth_cache_size = (enum a6xx_ccu_cache_size)cfg->depth_cache_fraction,
+          .depth_offset = depth_offset,
+          .color_cache_size = color_cache_size,
+          .color_offset = color_offset
+@@ -681,10 +681,10 @@
+             !dev->physical_device->info->props.has_gmem_fast_clear,
+          .concurrent_resolve =
+             dev->physical_device->info->props.concurrent_resolve,
+-         .depth_offset_hi = 0,
++         .depth_offset_hi = depth_offset_hi,
+          .color_offset_hi = color_offset_hi,
+-         .depth_cache_size = CCU_CACHE_SIZE_FULL,
+-         .depth_offset = 0,
++         .depth_cache_size = (enum a6xx_ccu_cache_size)cfg->depth_cache_fraction,
++         .depth_offset = depth_offset,
+          .color_cache_size = color_cache_size,
+          .color_offset = color_offset
+       ));
+@@ -1801,15 +1801,21 @@
+           * on the actual offset, and signficantly changing the performance
+           * could result in jank between frames as the offset changes.
+           */
+-         bool use_fast_store = (!fdm_offsets && !bin_scale_en) ||
++         bool non_subsampled_use_fast_store = !fdm_offsets && !bin_scale_en;
++         bool subsampled_use_fast_store = non_subsampled_use_fast_store ||
+             (tile->subsampled_views == tile->visible_views &&
+              !tile->subsampled_border);
+ 
+-         tu7_set_pred_mask(cs, (1u << TU_PREDICATE_FAST_STORE) |
+-                               (1u << TU_PREDICATE_NO_FAST_STORE),
+-                               (1u << (use_fast_store ?
+-                                       TU_PREDICATE_FAST_STORE :
+-                                       TU_PREDICATE_NO_FAST_STORE)));
++         tu7_set_pred_mask(cs, (1u << TU_PREDICATE_SUBSAMPLED_FAST_STORE) |
++                               (1u << TU_PREDICATE_SUBSAMPLED_NO_FAST_STORE),
++                               (1u << (subsampled_use_fast_store ?
++                                       TU_PREDICATE_SUBSAMPLED_FAST_STORE :
++                                       TU_PREDICATE_SUBSAMPLED_NO_FAST_STORE)));
++         tu7_set_pred_mask(cs, (1u << TU_PREDICATE_NON_SUBSAMPLED_FAST_STORE) |
++                               (1u << TU_PREDICATE_NON_SUBSAMPLED_NO_FAST_STORE),
++                               (1u << (non_subsampled_use_fast_store ?
++                                       TU_PREDICATE_NON_SUBSAMPLED_FAST_STORE :
++                                       TU_PREDICATE_NON_SUBSAMPLED_NO_FAST_STORE)));
+       }
+ 
+       util_dynarray_foreach (&cmd->fdm_bin_patchpoints,
+@@ -2626,11 +2632,14 @@
+ template <chip CHIP>
+ static void
+ tu6_emit_binning_pass(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
+-                      const VkOffset2D *fdm_offsets, bool use_cb)
++                      const VkOffset2D *fdm_offsets, bool use_cb,
++                      tu_autotune::rp_ctx_t rp_ctx)
+ {
+    struct tu_physical_device *phys_dev = cmd->device->physical_device;
+    const struct tu_framebuffer *fb = cmd->state.framebuffer;
+    const struct tu_tiling_config *tiling = cmd->state.tiling;
++
++   cmd->device->autotune->begin_binning(cs, rp_ctx);
+ 
+    /* If this command buffer may be executed multiple times, then
+     * viewports/scissor states may have been changed by previous executions
+@@ -2767,6 +2776,8 @@
+ 
+    tu_cs_emit_pkt7(cs, CP_SET_MODE, 1);
+    tu_cs_emit(cs, 0x0);
++
++   cmd->device->autotune->end_binning(cs, rp_ctx);
+ }
+ 
+ template <chip CHIP>
+@@ -3024,11 +3035,11 @@
+                     offsetof(fd_lrzfc_layout<CHIP>, buffer[0].dir_track);
+    }
+ 
+-   int32_t lrz_disabled_at_draw = cmd->state.rp.lrz_disabled_at_draw
++   int32_t lrz_disabled_at_draw = cmd->state.rp.lrz_disable_reason
+                                      ? cmd->state.rp.lrz_disabled_at_draw
+                                      : -1;
+    int32_t lrz_write_disabled_at_draw =
+-      cmd->state.rp.lrz_write_disabled_at_draw
++      cmd->state.rp.lrz_write_disable_reason
+          ? cmd->state.rp.lrz_write_disabled_at_draw
+          : -1;
+    trace_end_render_pass(
+@@ -3078,13 +3089,46 @@
+ 
+    cmd->state.fdm_enabled = cmd->state.pass->has_fdm;
+ 
+-   cmd->state.fdm_subsampled = false;
++   cmd->state.fdm_any_subsampled = false;
++   cmd->state.fdm_custom_resolve_subsampled = false;
+ 
+    for (unsigned i = 0; i < cmd->state.framebuffer->attachment_count; i++) {
+       const struct tu_image_view *iview = cmd->state.attachments[i];
+       if (iview && (iview->image->vk.create_flags &
+                     VK_IMAGE_CREATE_SUBSAMPLED_BIT_EXT)) {
+-         cmd->state.fdm_subsampled = true;
++         cmd->state.fdm_any_subsampled = true;
++      }
++   }
++
++   if (cmd->state.fdm_any_subsampled) {
++      for (unsigned i = 0; i < cmd->state.pass->subpass_count; i++) {
++         const struct tu_subpass *subpass = &cmd->state.pass->subpasses[i];
++         if (!subpass->custom_resolve)
++            continue;
++
++         for (unsigned j = 0; j < subpass->color_count; j++) {
++            uint32_t a = subpass->color_attachments[j].attachment;
++            if (a == VK_ATTACHMENT_UNUSED)
++               continue;
++            const tu_image_view *iview = cmd->state.attachments[a];
++            if (iview->image->vk.create_flags &
++                VK_IMAGE_CREATE_SUBSAMPLED_BIT_EXT) {
++               cmd->state.fdm_custom_resolve_subsampled = true;
++               break;
++            }
++         }
++
++         uint32_t a = subpass->depth_stencil_attachment.attachment;
++         if (a != VK_ATTACHMENT_UNUSED) {
++            const tu_image_view *iview = cmd->state.attachments[a];
++            if (iview->image->vk.create_flags &
++                VK_IMAGE_CREATE_SUBSAMPLED_BIT_EXT) {
++               cmd->state.fdm_custom_resolve_subsampled = true;
++            }
++         }
++
++         /* only one subpass can be custom resolve */
++         break;
+       }
+    }
+ }
+@@ -3112,6 +3156,14 @@
+        tu7_cb_disable_reason(
+           (!cmd->state.lrz.fast_clear && cmd->state.lrz.image_view), cmd,
+           "LRZ fast clear disabled") ||
++       /* A partially covering flag RAM needs the uncovered blocks cleared by a
++        * blit, which can only be emitted in BR. BV would then run against an
++        * LRZ buffer whose tail still holds stale depths and over-cull.
++        */
++       tu7_cb_disable_reason(
++          cmd->state.lrz.image_view &&
++          !fdl6_lrz_fc_fully_covered(&cmd->state.lrz.image_view->image->lrz_layout),
++          cmd, "partial LRZ fast clear") ||
+        tu7_cb_disable_reason(!cmd->device->instance->drirc.perf.allow_concurrent_binning, cmd,
+                              "globally disabled")) {
+      tu_cs_emit_pkt7(cs, CP_THREAD_CONTROL, 1);
+@@ -3283,7 +3335,8 @@
+       tu_cs_emit_regs(cs, RB_BIN_FOVEAT(CHIP));
+    }
+ 
+-   cmd->device->autotune->begin_renderpass(cmd, cs, rp_ctx, true, 0);
++   cmd->device->autotune->init_renderpass(rp_ctx, true, 0);
++   cmd->device->autotune->begin_renderpass(cmd, cs, rp_ctx);
+ 
+    tu_cs_sanity_check(cs);
+ }
+@@ -3303,10 +3356,13 @@
+    tu_cs_emit_pkt7(cs, CP_SKIP_IB2_ENABLE_GLOBAL, 1);
+    tu_cs_emit(cs, 0x0);
+ 
+-   if (cmd->state.fdm_subsampled) {
++   if (cmd->state.fdm_any_subsampled) {
+       for (unsigned i = 0; i < cmd->state.pass->attachment_count; i++) {
+          if (i != cmd->state.pass->fragment_density_map.attachment &&
+-             cmd->state.pass->attachments[i].store) {
++             (cmd->state.pass->attachments[i].store ||
++              cmd->state.pass->attachments[i].store_stencil) &&
++             (cmd->state.attachments[i]->image->vk.create_flags &
++              VK_IMAGE_CREATE_SUBSAMPLED_BIT_EXT)) {
+             /* emit dummy subsampled metadata since we didn't use FDM */
+             tu_emit_subsampled_metadata(cmd, &cmd->cs, i,
+                                         NULL, NULL, NULL,
+@@ -3489,6 +3545,9 @@
+    const struct tu_vsc_config *vsc = tu_vsc_config(cmd, tiling);
+    const struct tu_render_pass *pass = cmd->state.pass;
+    bool use_binning = use_hw_binning(cmd);
++   uint32_t tile_count = vsc->tile_count.width * vsc->tile_count.height;
++
++   cmd->device->autotune->init_renderpass(rp_ctx, false, tile_count);
+ 
+    /* User flushes should always be executed on BR. */
+    tu_emit_cache_flush_ccu<CHIP>(cmd, cs, TU_CMD_CCU_GMEM);
+@@ -3557,7 +3616,7 @@
+ 
+       tu6_emit_render_cntl<CHIP>(cmd, cmd->state.subpass, cs, true);
+ 
+-      tu6_emit_binning_pass<CHIP>(cmd, cs, fdm_offsets, use_cb);
++      tu6_emit_binning_pass<CHIP>(cmd, cs, fdm_offsets, use_cb, rp_ctx);
+ 
+       /* Enable early return from CP_INDIRECT_BUFFER once the visibility stream
+        * is done.  We don't enable this if there are stores in a non-final
+@@ -3660,8 +3719,7 @@
+    if (use_cb)
+       tu_trace_start_render_pass(cmd);
+ 
+-   uint32_t tile_count = vsc->tile_count.width * vsc->tile_count.height;
+-   cmd->device->autotune->begin_renderpass(cmd, cs, rp_ctx, false, tile_count);
++   cmd->device->autotune->begin_renderpass(cmd, cs, rp_ctx);
+ 
+    tu_cs_sanity_check(cs);
+ }
+@@ -3812,7 +3870,10 @@
+ 
+    for (unsigned i = 0; i < cmd->state.pass->attachment_count; i++) {
+       if (i != cmd->state.pass->fragment_density_map.attachment &&
+-          cmd->state.pass->attachments[i].store) {
++          (cmd->state.pass->attachments[i].store ||
++           cmd->state.pass->attachments[i].store_stencil) &&
++          (cmd->state.attachments[i]->image->vk.create_flags &
++           VK_IMAGE_CREATE_SUBSAMPLED_BIT_EXT)) {
+          tu_emit_subsampled_metadata(cmd, cs, i,
+                                      tiles, tiling, vsc,
+                                      cmd->state.framebuffer,
+@@ -3852,12 +3913,13 @@
+       if (count != 0) {
+          for (unsigned i = 0; i < cmd->state.pass->attachment_count; i++) {
+             if (i != cmd->state.pass->fragment_density_map.attachment &&
+-                cmd->state.pass->attachments[i].store &&
+-                (cmd->state.pass->num_views == 0 ||
+-                 (cmd->state.pass->attachments[i].used_views & (1u << layer)) ||
++                (cmd->state.pass->attachments[i].store || cmd->state.pass->attachments[i].store_stencil) &&
++                (cmd->state.attachments[i]->image->vk.create_flags &
++                 VK_IMAGE_CREATE_SUBSAMPLED_BIT_EXT) &&
++                (cmd->state.pass->num_views == 0 || (cmd->state.pass->attachments[i].used_views & (1u << layer)) ||
+                  (cmd->state.pass->attachments[i].resolve_views & (1u << layer)))) {
+-               tu_blit_subsampled_apron<CHIP>(cmd, cs, cmd->state.attachments[i],
+-                                              layer, dst, src, count);
++               tu_blit_subsampled_apron<CHIP>(cmd, cs, cmd->state.attachments[i], cmd->state.pass->attachments[i].store,
++                                              cmd->state.pass->attachments[i].store_stencil, layer, dst, src, count);
+             }
+          }
+       }
+@@ -3986,7 +4048,7 @@
+     */
+    tu_disable_draw_states(cmd, &cmd->cs);
+ 
+-   if (cmd->state.fdm_subsampled) {
++   if (cmd->state.fdm_any_subsampled) {
+       tu_emit_subsampled<CHIP>(cmd, tiles, tiling, vsc, cmd->state.framebuffer,
+                                fdm_offsets);
+    }
+@@ -6173,6 +6235,7 @@
+    dst->has_zpass_done_sample_count_write_in_rp |= src->has_zpass_done_sample_count_write_in_rp;
+    dst->disable_gmem |= src->disable_gmem;
+    dst->sysmem_single_prim_mode |= src->sysmem_single_prim_mode;
++   dst->lrz_disable_for_next_rp |= src->lrz_disable_for_next_rp;
+    dst->draw_cs_writes_to_cond_pred |= src->draw_cs_writes_to_cond_pred;
+    dst->shared_viewport |= src->shared_viewport;
+ 
+@@ -6183,8 +6246,8 @@
+       dst->lrz_disabled_at_draw =
+          dst->drawcall_count + src->lrz_disabled_at_draw;
+    }
+-   if (!dst->lrz_write_disabled_at_draw &&
+-       src->lrz_write_disabled_at_draw) {
++   if (!dst->lrz_write_disable_reason &&
++       src->lrz_write_disable_reason) {
+       dst->lrz_write_disable_reason = src->lrz_write_disable_reason;
+       dst->lrz_write_disabled_at_draw =
+          dst->drawcall_count + src->lrz_write_disabled_at_draw;
+@@ -6209,12 +6272,18 @@
+           suspended->state.suspended_pass.render_areas,
+           sizeof(cmd->state.render_areas));
+    cmd->state.per_layer_render_area = suspended->state.suspended_pass.per_layer_render_area;
+-   cmd->state.fdm_subsampled = suspended->state.suspended_pass.fdm_subsampled;
++   cmd->state.fdm_any_subsampled = suspended->state.suspended_pass.fdm_any_subsampled;
++   cmd->state.fdm_custom_resolve_subsampled =
++      suspended->state.suspended_pass.fdm_custom_resolve_subsampled;
+    cmd->state.gmem_layout = suspended->state.suspended_pass.gmem_layout;
+    cmd->state.gmem_layout_divisor = suspended->state.suspended_pass.gmem_layout_divisor;
+    cmd->state.tiling = tu_framebuffer_get_tiling_config(cmd->state.framebuffer, cmd->device, cmd->state.pass,
+                                                         cmd->state.gmem_layout, cmd->state.gmem_layout_divisor);
+    cmd->state.lrz = suspended->state.suspended_pass.lrz;
++
++#ifdef HAVE_PERFETTO
++   cmd->vk.dynamic_graphics_state.vp = suspended->vk.dynamic_graphics_state.vp;
++#endif
+ }
+ 
+ /* Take the saved pre-chain in "secondary" and copy its commands to "cmd",
+@@ -6347,8 +6416,7 @@
+           VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT) {
+          assert(tu_cs_is_empty(&secondary->cs));
+ 
+-         tu_lrz_flush_valid_at_secondary_rp_boundary(
+-            cmd, secondary->state.lrz, &cmd->draw_cs);
++         TU_CALLX(cmd->device, tu_lrz_flush_valid_at_secondary_rp_boundary)(cmd, secondary->state.lrz, &cmd->draw_cs);
+ 
+          result = tu_cs_add_entries(&cmd->draw_cs, &secondary->draw_cs);
+          if (result != VK_SUCCESS) {
+@@ -6368,6 +6436,7 @@
+           */
+          if (!secondary->state.lrz.valid)
+             cmd->state.lrz.valid = false;
++         cmd->state.lrz.disable_write_for_rp |= secondary->state.lrz.disable_write_for_rp;
+          if (secondary->state.lrz.gpu_dir_set)
+             cmd->state.lrz.gpu_dir_set = true;
+          if (cmd->state.lrz.prev_direction == TU_LRZ_UNKNOWN &&
+@@ -7073,6 +7142,45 @@
+ TU_GENX(tu_CmdBeginRenderPass2);
+ 
+ template <chip CHIP>
++static void
++tu_emit_rendering_attachment_locations(struct tu_cmd_buffer *cmd)
++{
++   tu6_emit_mrt<CHIP>(cmd, cmd->state.subpass, &cmd->draw_cs);
++   tu6_emit_render_cntl<CHIP>(cmd, cmd->state.subpass, &cmd->draw_cs, false);
++
++   bool skips_att = false;
++   for (unsigned i = 0; i < cmd->state.subpass->color_count; i++) {
++      if (cmd->state.subpass->color_attachments[i].attachment == VK_ATTACHMENT_UNUSED)
++         continue;
++
++      if (cmd->vk.dynamic_graphics_state.cal.color_map[i] == MESA_VK_ATTACHMENT_UNUSED) {
++         skips_att = true;
++         break;
++      }
++   }
++
++   /* Same case as a drawcall not writing to some color attachments. */
++   if (skips_att && cmd->state.lrz.valid && !cmd->state.lrz.disable_write_for_rp) {
++      tu_lrz_disable_write_for_rp(cmd, "CmdSetRenderingAttachmentLocations with skipped color attachments");
++      cmd->state.dirty |= TU_CMD_DIRTY_LRZ;
++   }
++
++   /* Because this is just a remapping and not a different "reference", there
++    * doesn't need to be a barrier between accesses to the same attachment
++    * with a different index. This is different from "classic" renderpasses.
++    * Before a7xx the CCU includes the render target ID in the cache location
++    * calculation, so we need to manually flush/invalidate color CCU here
++    * since the same render target/attachment may be in a different location.
++    */
++   if (cmd->device->physical_device->info->chip == 6) {
++      struct tu_cache_state *cache = &cmd->state.renderpass_cache;
++      tu_flush_for_access(cache, TU_ACCESS_CCU_COLOR_INCOHERENT_WRITE,
++                          TU_ACCESS_CCU_COLOR_INCOHERENT_WRITE);
++      cache->flush_bits |= TU_CMD_FLAG_WAIT_FOR_IDLE;
++   }
++}
++
++template <chip CHIP>
+ VKAPI_ATTR void VKAPI_CALL
+ tu_CmdBeginRendering(VkCommandBuffer commandBuffer,
+                      const VkRenderingInfo *pRenderingInfo)
+@@ -7117,7 +7225,12 @@
+                      pRenderingInfo->pColorAttachments[i].imageView);
+       cmd->state.attachments[a] = view;
+ 
+-      if (cmd->dynamic_pass.subpass_count > 1) {
++      /* A fixed-function resolve mixed into a custom resolve pass lives on
++       * the main subpass, not the custom resolve subpass.
++       */
++      if (cmd->dynamic_pass.subpass_count > 1 &&
++          cmd->dynamic_subpasses[1].color_attachments[i].attachment !=
++             VK_ATTACHMENT_UNUSED) {
+          a = cmd->dynamic_subpasses[1].color_attachments[i].attachment;
+       } else {
+          a = cmd->dynamic_subpasses[0].resolve_attachments[i].attachment;
+@@ -7165,7 +7278,12 @@
+             cmd->state.attachments[a] = resolve_view;
+          }
+ 
+-         if (cmd->dynamic_pass.subpass_count > 1) {
++         /* A fixed-function resolve mixed into a custom resolve pass lives on
++          * the main subpass, not the custom resolve subpass.
++          */
++         if (cmd->dynamic_pass.subpass_count > 1 &&
++             cmd->dynamic_subpasses[1].depth_stencil_attachment.attachment !=
++             VK_ATTACHMENT_UNUSED) {
+             a = cmd->dynamic_subpasses[1].depth_stencil_attachment.attachment;
+             if (a != VK_ATTACHMENT_UNUSED) {
+                VK_FROM_HANDLE(tu_image_view, resolve_view,
+@@ -7190,6 +7308,12 @@
+       .colorAttachmentCount = pRenderingInfo->colorAttachmentCount,
+    };
+    vk_cmd_set_rendering_attachment_locations(&cmd->vk, &ral_info);
++
++   const VkRenderingInputAttachmentIndexInfoKHR rial_info = {
++      .sType = VK_STRUCTURE_TYPE_RENDERING_INPUT_ATTACHMENT_INDEX_INFO_KHR,
++      .colorAttachmentCount = pRenderingInfo->colorAttachmentCount,
++   };
++   vk_common_CmdSetRenderingInputAttachmentIndicesKHR(commandBuffer, &rial_info);
+ 
+    a = cmd->dynamic_subpasses[0].fsr_attachment;
+    if (a != VK_ATTACHMENT_UNUSED) {
+@@ -7245,8 +7369,10 @@
+              cmd->state.render_areas, sizeof(cmd->state.render_areas));
+       cmd->state.suspended_pass.per_layer_render_area =
+          cmd->state.per_layer_render_area;
+-      cmd->state.suspended_pass.fdm_subsampled =
+-         cmd->state.fdm_subsampled;
++      cmd->state.suspended_pass.fdm_any_subsampled =
++         cmd->state.fdm_any_subsampled;
++      cmd->state.suspended_pass.fdm_custom_resolve_subsampled =
++         cmd->state.fdm_custom_resolve_subsampled;
+       cmd->state.suspended_pass.attachments = cmd->state.attachments;
+       cmd->state.suspended_pass.clear_values = cmd->state.clear_values;
+       cmd->state.suspended_pass.gmem_layout = cmd->state.gmem_layout;
+@@ -7257,9 +7383,15 @@
+                              &cmd->state.vk_mv,
+                              cmd->state.pass, cmd->state.subpass);
+ 
++   if (!cmd->patchpoints_ctx)
++      cmd->patchpoints_ctx = ralloc_context(NULL);
++
+    if (!resuming) {
+-      cmd->patchpoints_ctx = ralloc_context(NULL);
+       tu_emit_subpass_begin<CHIP>(cmd);
++   } else {
++      /* Even resuming vkCmdBeginRendering resets RT and input attachment locations, so we have to re-emit them. */
++      tu_emit_rendering_attachment_locations<CHIP>(cmd);
++      tu_set_input_attachments<CHIP>(cmd, cmd->state.subpass);
+    }
+ 
+    if (suspending && !resuming) {
+@@ -7294,28 +7426,7 @@
+ 
+    vk_common_CmdSetRenderingAttachmentLocationsKHR(commandBuffer, pLocationInfo);
+ 
+-   tu6_emit_mrt<CHIP>(cmd, cmd->state.subpass, &cmd->draw_cs);
+-   tu6_emit_render_cntl<CHIP>(cmd, cmd->state.subpass, &cmd->draw_cs, false);
+-
+-   /* Same case as a drawcall not writing to some color attachments, but not
+-    * trying to make LRZ work in cases where we can prove that LRZ can work.
+-    */
+-   if (cmd->state.lrz.valid)
+-      tu_lrz_disable_write_for_rp(cmd, "CmdSetRenderingAttachmentLocations");
+-
+-   /* Because this is just a remapping and not a different "reference", there
+-    * doesn't need to be a barrier between accesses to the same attachment
+-    * with a different index. This is different from "classic" renderpasses.
+-    * Before a7xx the CCU includes the render target ID in the cache location
+-    * calculation, so we need to manually flush/invalidate color CCU here
+-    * since the same render target/attachment may be in a different location.
+-    */
+-   if (cmd->device->physical_device->info->chip == 6) {
+-      struct tu_cache_state *cache = &cmd->state.renderpass_cache;
+-      tu_flush_for_access(cache, TU_ACCESS_CCU_COLOR_INCOHERENT_WRITE,
+-                          TU_ACCESS_CCU_COLOR_INCOHERENT_WRITE);
+-      cache->flush_bits |= TU_CMD_FLAG_WAIT_FOR_IDLE;
+-   }
++   tu_emit_rendering_attachment_locations<CHIP>(cmd);
+ }
+ TU_GENX(tu_CmdSetRenderingAttachmentLocationsKHR);
+ 
+@@ -7326,11 +7437,15 @@
+    const VkRenderingInputAttachmentIndexInfoKHR *pLocationInfo)
+ {
+    VK_FROM_HANDLE(tu_cmd_buffer, cmd, commandBuffer);
++   const uint8_t old_depth_att = cmd->vk.dynamic_graphics_state.ial.depth_att;
+ 
+    vk_common_CmdSetRenderingInputAttachmentIndicesKHR(commandBuffer, pLocationInfo);
+ 
+    const struct vk_input_attachment_location_state *ial =
+       &cmd->vk.dynamic_graphics_state.ial;
++
++   if (old_depth_att != ial->depth_att)
++      cmd->state.dirty |= TU_CMD_DIRTY_LRZ;
+ 
+    struct tu_subpass *subpass = &cmd->dynamic_subpasses[0];
+ 
+@@ -7372,25 +7487,74 @@
+    }
+ 
+    subpass->input_count = input_count;
+-
+-   tu_set_input_attachments<CHIP>(cmd, subpass);
++   /* input_attachments point to the same cmd_buffer->dynamic_input_attachments for main and custom resolve subpasses,
++    * while input_count needs to be explicitly set for both.
++    */
++   if (cmd->dynamic_pass.subpass_count > 1) {
++      cmd->dynamic_subpasses[1].input_count = input_count;
++   }
++
++   tu_set_input_attachments<CHIP>(cmd, cmd->state.subpass);
+ }
+ TU_GENX(tu_CmdSetRenderingInputAttachmentIndicesKHR);
+ 
++template <chip CHIP>
+ static void
+ tu_next_subpass_lrz(struct tu_cmd_buffer *cmd,
+                     const struct tu_subpass *subpass,
+                     const struct tu_subpass *new_subpass)
+ {
++   /* If custom resolve writes depth LRZ shouldn't be used for it. */
++   if (new_subpass->custom_resolve) {
++      if (new_subpass->depth_stencil_attachment.attachment != VK_ATTACHMENT_UNUSED) {
++         tu_lrz_disable_during_renderpass<CHIP>(cmd, "Custom resolve writes depth");
++      } else {
++         cmd->state.dirty |= TU_CMD_DIRTY_LRZ;
++      }
++      return;
++   }
++
+    /* Track LRZ valid state
+     *
+     * TODO: Improve this tracking for keeping the state of the past depth/stencil images,
+     * so if they become active again, we reuse its old state.
+     */
+    if (new_subpass->depth_stencil_attachment.attachment != subpass->depth_stencil_attachment.attachment) {
+-      cmd->state.lrz.valid = false;
+-      cmd->state.dirty |= TU_CMD_DIRTY_LRZ;
+-   }
++      tu_lrz_disable_during_renderpass<CHIP>(cmd, "Depth/stencil attachment changed between subpasses");
++   }
++}
++
++template <chip CHIP>
++static void
++tu_emit_subpass_stores(struct tu_cmd_buffer *cmd,
++                       const struct tu_subpass *subpass)
++{
++   struct tu_cs *cs = &cmd->draw_cs;
++
++   if (cmd->state.tiling->possible) {
++      if (cmd->state.pass->has_fdm)
++         tu_cs_set_writeable(cs, true);
++
++      tu_cond_exec_start(cs, CP_COND_EXEC_0_RENDER_MODE_GMEM);
++
++      struct tu_resolve_group resolve_group = {};
++
++      tu6_emit_gmem_stores<CHIP>(cmd, &cmd->draw_cs, &resolve_group, subpass);
++
++      tu_emit_resolve_group<CHIP>(cmd, cs, &resolve_group);
++
++      tu_cond_exec_end(cs);
++
++      if (cmd->state.pass->has_fdm)
++         tu_cs_set_writeable(cs, false);
++
++      tu_cond_exec_start(cs, CP_COND_EXEC_0_RENDER_MODE_SYSMEM);
++   }
++
++   tu6_emit_sysmem_resolves<CHIP>(cmd, cs, subpass);
++
++   if (cmd->state.tiling->possible)
++      tu_cond_exec_end(cs);
+ }
+ 
+ template <chip CHIP>
+@@ -7407,37 +7571,12 @@
+       return;
+    }
+ 
+-   struct tu_cs *cs = &cmd->draw_cs;
+-
+    const struct tu_subpass *subpass = cmd->state.subpass++;
+    const struct tu_subpass *new_subpass = cmd->state.subpass;
+ 
+-   tu_next_subpass_lrz(cmd, subpass, new_subpass);
+-
+-   if (cmd->state.tiling->possible) {
+-      if (cmd->state.pass->has_fdm)
+-         tu_cs_set_writeable(cs, true);
+-
+-      tu_cond_exec_start(cs, CP_COND_EXEC_0_RENDER_MODE_GMEM);
+-
+-      struct tu_resolve_group resolve_group = {};
+-
+-      tu6_emit_gmem_stores<CHIP>(cmd, &cmd->draw_cs, &resolve_group, subpass);
+-
+-      tu_emit_resolve_group<CHIP>(cmd, cs, &resolve_group);
+-
+-      tu_cond_exec_end(cs);
+-
+-      if (cmd->state.pass->has_fdm)
+-         tu_cs_set_writeable(cs, false);
+-
+-      tu_cond_exec_start(cs, CP_COND_EXEC_0_RENDER_MODE_SYSMEM);
+-   }
+-
+-   tu6_emit_sysmem_resolves<CHIP>(cmd, cs, subpass);
+-
+-   if (cmd->state.tiling->possible)
+-      tu_cond_exec_end(cs);
++   tu_next_subpass_lrz<CHIP>(cmd, subpass, new_subpass);
++
++   tu_emit_subpass_stores<CHIP>(cmd, subpass);
+ 
+    /* Handle dependencies for the next subpass */
+    tu_subpass_barrier<CHIP>(cmd, &cmd->state.subpass->start_barrier, false);
+@@ -7467,7 +7606,8 @@
+    const struct tu_subpass *new_subpass = &cmd->dynamic_subpasses[1];
+    cmd->state.subpass = new_subpass;
+ 
+-   tu_next_subpass_lrz(cmd, subpass, new_subpass);
++   tu_next_subpass_lrz<CHIP>(cmd, subpass, new_subpass);
++   tu_emit_subpass_stores<CHIP>(cmd, subpass);
+ 
+    tu_fill_render_pass_state(&cmd->state.vk_rp,
+                              &cmd->state.vk_mv,
+@@ -8160,11 +8300,12 @@
+       VkExtent2D rendering_frag_area = tile_frag_area;
+       VkExtent2D gmem_frag_area = (VkExtent2D) { 1, 1 };
+       if (state->custom_resolve) {
+-         if (config->subsampled)
++         if (config->custom_resolve_subsampled)
+             tile_start = config->subsampled_pos[view].offset;
+          else
+             tile_start = bin.offset;
+-         if (!(config->subsampled_views & (1u << view))) {
++         if (!(config->subsampled_views & (1u << view)) ||
++             !config->custom_resolve_subsampled) {
+             rendering_frag_area = (VkExtent2D){ 1, 1 };
+             gmem_frag_area = tile_frag_area;
+          }
+@@ -9810,11 +9951,10 @@
+ 
+    if (cmd_buffer->state.suspending) {
+       cmd_buffer->state.suspended_pass.lrz = cmd_buffer->state.lrz;
+-      /* We cannot pass LRZ state to next resuming renderpass, so we have to
+-       * force disable it here.
++      /* Flush LRZ validity and sticky write-disable state across the
++       * resuming renderpass, which cannot inherit our CPU-tracked LRZ state.
+        */
+-      tu_lrz_flush_valid_at_suspending_rp_boundary(cmd_buffer,
+-                                                   &cmd_buffer->draw_cs);
++      TU_CALLX(cmd_buffer->device, tu_lrz_flush_valid_at_suspending_rp_boundary)(cmd_buffer, &cmd_buffer->draw_cs);
+    } else {
+       TU_CALLX(cmd_buffer->device, tu_emit_custom_resolve_end)(cmd_buffer);
+    }
+--- a/src/freedreno/vulkan/tu_cmd_buffer.h
++++ b/src/freedreno/vulkan/tu_cmd_buffer.h
+@@ -314,6 +314,7 @@
+    bool has_zpass_done_sample_count_write_in_rp;
+    bool disable_gmem;
+    bool sysmem_single_prim_mode;
++   bool lrz_disable_for_next_rp;
+ 
+    /* This is set if, at any point in the render pass, we were not able to
+     * duplicate the viewport per-view due to the user using multiple viewports
+@@ -562,7 +563,8 @@
+       struct tu_framebuffer *framebuffer;
+       VkRect2D render_areas[MAX_VIEWS];
+       bool per_layer_render_area;
+-      bool fdm_subsampled;
++      bool fdm_any_subsampled;
++      bool fdm_custom_resolve_subsampled;
+       enum tu_gmem_layout gmem_layout;
+       uint32_t gmem_layout_divisor;
+ 
+@@ -573,7 +575,8 @@
+    } suspended_pass;
+ 
+    bool fdm_enabled;
+-   bool fdm_subsampled;
++   bool fdm_any_subsampled;
++   bool fdm_custom_resolve_subsampled;
+ 
+    bool tessfactor_addr_set;
+    bool predication_active;
+@@ -696,6 +699,11 @@
+    struct tu_subpass_attachment dynamic_color_attachments[MAX_RTS];
+    struct tu_subpass_attachment dynamic_input_attachments[MAX_RTS + 1];
+    struct tu_subpass_attachment dynamic_resolve_attachments[MAX_RTS + 1];
++   /* The color attachments of the custom resolve subpass, which cannot share
++    * dynamic_resolve_attachments: the main subpass still needs its resolve
++    * list for any fixed-function resolves mixed into the pass.
++    */
++   struct tu_subpass_attachment dynamic_custom_resolve_attachments[MAX_RTS];
+    struct tu_subpass_attachment dynamic_unresolve_attachments[MAX_RTS + 1];
+    const struct tu_image_view *dynamic_attachments[3 * (MAX_RTS + 1) + 2];
+    VkClearValue dynamic_clear_values[3 * (MAX_RTS + 1)];
+--- a/src/freedreno/vulkan/tu_common.h
++++ b/src/freedreno/vulkan/tu_common.h
+@@ -156,8 +156,10 @@
+    TU_PREDICATE_VTX_STATS_RUNNING = 3,
+    TU_PREDICATE_VTX_STATS_NOT_RUNNING = 4,
+    TU_PREDICATE_FIRST_TILE = 5,
+-   TU_PREDICATE_FAST_STORE = 6,
+-   TU_PREDICATE_NO_FAST_STORE = 7,
++   TU_PREDICATE_SUBSAMPLED_FAST_STORE = 6,
++   TU_PREDICATE_SUBSAMPLED_NO_FAST_STORE = 7,
++   TU_PREDICATE_NON_SUBSAMPLED_FAST_STORE = 8,
++   TU_PREDICATE_NON_SUBSAMPLED_NO_FAST_STORE = 9,
+ };
+ 
+ /* Onchip timestamp register layout. */
+--- a/src/freedreno/vulkan/tu_device.cc
++++ b/src/freedreno/vulkan/tu_device.cc
+@@ -337,6 +337,10 @@
+       .EXT_host_image_copy = true,
+       .EXT_host_query_reset = true,
+       .EXT_image_2d_view_of_3d = true,
++      .EXT_image_compression_control = true,
++#ifdef TU_USE_WSI_PLATFORM
++      .EXT_image_compression_control_swapchain = true,
++#endif
+       .EXT_image_drm_format_modifier = true,
+       .EXT_image_robustness = true,
+       .EXT_image_view_min_lod = true,
+@@ -768,6 +772,14 @@
+    /* VK_EXT_image_2d_view_of_3d  */
+    features->image2DViewOf3D = true;
+    features->sampler2DViewOf3D = true;
++
++   /* VK_EXT_image_compression_control */
++   features->imageCompressionControl = true;
++
++#ifdef TU_USE_WSI_PLATFORM
++   /* VK_EXT_image_compression_control_swapchain */
++   features->imageCompressionControlSwapchain = true;
++#endif
+ 
+    /* VK_EXT_image_view_min_lod */
+    features->minLod = true;
+@@ -3803,7 +3815,7 @@
+ 
+       result = TU_CALLX(device, tu_image_init)(
+          device, mem->image, mem->image->vk.android_deferred_create_info,
+-         eci.drmFormatModifier, a_plane_layouts);
++         eci.drmFormatModifier, a_plane_layouts, TU_IMAGE_ID_ASSIGN);
+       if (result != VK_SUCCESS) {
+          vk_device_memory_destroy(&device->vk, pAllocator, &mem->vk);
+          return result;
+@@ -4069,7 +4081,8 @@
+        */
+       vk_image_init(&device->vk, &images[i].vk, &image_info);
+ 
+-      TU_CALLX(device, tu_image_init)(device, &images[i], &image_info, DRM_FORMAT_MOD_INVALID, NULL);
++      TU_CALLX(device, tu_image_init)(device, &images[i], &image_info, DRM_FORMAT_MOD_INVALID, NULL,
++                                      TU_IMAGE_ID_INTERNAL);
+ 
+       if (is_ds) {
+          depth_size = align64(depth_size, images[i].layout[0].base_align);
+--- a/src/freedreno/vulkan/tu_device.h
++++ b/src/freedreno/vulkan/tu_device.h
+@@ -489,6 +489,9 @@
+ 
+    uint32_t vis_stream_count;
+    uint32_t vis_stream_size;
++
++   /* Monotonically increasing counter assigned to each tu_image at creation. */
++   uint64_t next_image_id;
+ };
+ VK_DEFINE_HANDLE_CASTS(tu_device, vk.base, VkDevice, VK_OBJECT_TYPE_DEVICE)
+ 
+--- a/src/freedreno/vulkan/tu_formats.cc
++++ b/src/freedreno/vulkan/tu_formats.cc
+@@ -515,8 +515,19 @@
+          return VK_ERROR_FORMAT_NOT_SUPPORTED;
+ 
+       switch (drm_info->drmFormatModifier) {
+-      case DRM_FORMAT_MOD_QCOM_COMPRESSED:
++      case DRM_FORMAT_MOD_QCOM_COMPRESSED: {
+          /* falling back to linear/non-UBWC isn't possible with explicit modifier */
++
++         /* VK_IMAGE_COMPRESSION_DISABLED_EXT explicitly asks for
++          * uncompressed storage, which is incompatible with the
++          * QCOM_COMPRESSED (UBWC) modifier since there's no fallback to
++          * linear/non-UBWC with an explicit modifier.
++          */
++         const VkImageCompressionControlEXT *compression_control =
++            vk_find_struct_const(info->pNext, IMAGE_COMPRESSION_CONTROL_EXT);
++         if (compression_control &&
++             (compression_control->flags & VK_IMAGE_COMPRESSION_DISABLED_EXT))
++            return VK_ERROR_FORMAT_NOT_SUPPORTED;
+ 
+          /* formats which don't support tiling */
+          if (!format_props.optimalTilingFeatures ||
+@@ -540,6 +551,7 @@
+ 
+          format_feature_flags = format_props.optimalTilingFeatures;
+          break;
++      }
+       case DRM_FORMAT_MOD_LINEAR:
+          format_feature_flags = format_props.linearTilingFeatures;
+          break;
+@@ -775,11 +787,14 @@
+    VK_FROM_HANDLE(tu_physical_device, physical_device, physicalDevice);
+    const VkPhysicalDeviceExternalImageFormatInfo *external_info = NULL;
+    const VkPhysicalDeviceImageViewImageFormatInfoEXT *image_view_info = NULL;
++   const VkImageCompressionControlEXT *compression_control = NULL;
++   const VkPhysicalDeviceImageDrmFormatModifierInfoEXT *drm_info = NULL;
+    VkExternalImageFormatProperties *external_props = NULL;
+    VkFilterCubicImageViewImageFormatPropertiesEXT *cubic_props = NULL;
+    VkFormatFeatureFlags format_feature_flags;
+    VkSamplerYcbcrConversionImageFormatProperties *ycbcr_props = NULL;
+    VkHostImageCopyDevicePerformanceQueryEXT *hic_props = NULL;
++   VkImageCompressionPropertiesEXT *compression_props = NULL;
+    VkResult result;
+ 
+    result = tu_get_image_format_properties(physical_device,
+@@ -797,10 +812,21 @@
+       case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_VIEW_IMAGE_FORMAT_INFO_EXT:
+          image_view_info = (const VkPhysicalDeviceImageViewImageFormatInfoEXT *) s;
+          break;
++      case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_DRM_FORMAT_MODIFIER_INFO_EXT:
++         drm_info = (const VkPhysicalDeviceImageDrmFormatModifierInfoEXT *) s;
++         break;
++      case VK_STRUCTURE_TYPE_IMAGE_COMPRESSION_CONTROL_EXT:
++         compression_control = (const VkImageCompressionControlEXT *) s;
++         break;
+       default:
+          break;
+       }
+    }
++
++   bool is_linear_tiling =
++      base_info->tiling == VK_IMAGE_TILING_LINEAR ||
++      (base_info->tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT &&
++       drm_info && drm_info->drmFormatModifier == DRM_FORMAT_MOD_LINEAR);
+ 
+    /* Extract output structs */
+    vk_foreach_struct(s, base_props->pNext)
+@@ -817,6 +843,9 @@
+          break;
+       case VK_STRUCTURE_TYPE_HOST_IMAGE_COPY_DEVICE_PERFORMANCE_QUERY_EXT:
+          hic_props = (VkHostImageCopyDevicePerformanceQueryEXT *) s;
++         break;
++      case VK_STRUCTURE_TYPE_IMAGE_COMPRESSION_PROPERTIES_EXT:
++         compression_props = (VkImageCompressionPropertiesEXT *) s;
+          break;
+       default:
+          break;
+@@ -832,6 +861,15 @@
+    if (external_info && external_info->handleType != 0) {
+       if (external_info->handleType ==
+           VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID) {
++         /* Turnip cannot import VK_FORMAT_S8_UINT AHBs because stencil-only
++          * AHBs are linear, while depth/stencil images must be tiled.
++          */
++         if (base_info->format == VK_FORMAT_S8_UINT) {
++            result = vk_errorf(physical_device, VK_ERROR_FORMAT_NOT_SUPPORTED,
++                               "VK_FORMAT_S8_UINT AHB import is not supported");
++            goto fail;
++         }
++
+          result = vk_android_get_ahb_image_properties(physicalDevice,
+                                                       base_info, base_props);
+          if (result != VK_SUCCESS)
+@@ -892,7 +930,7 @@
+        *    optimalDeviceAccess.
+        */
+       hic_props->optimalDeviceAccess = hic_props->identicalMemoryLayout =
+-         base_info->tiling == VK_IMAGE_TILING_LINEAR ||
++         is_linear_tiling ||
+          base_info->type == VK_IMAGE_TYPE_1D ||
+          !tiling_possible(base_info->format) ||
+          (base_info->usage & VK_IMAGE_USAGE_FRAGMENT_DENSITY_MAP_BIT_EXT) ||
+@@ -909,6 +947,31 @@
+                         physical_device->info->props.has_z24uint_s8uint));
+    }
+ 
++   if (compression_props) {
++      /* Turnip's only form of compression is UBWC and we don't expose any
++       * fixed-rate compression modes.
++       */
++      compression_props->imageCompressionFixedRateFlags =
++         VK_IMAGE_COMPRESSION_FIXED_RATE_NONE_EXT;
++
++      bool ubwc_supported =
++         !is_linear_tiling &&
++         base_info->type != VK_IMAGE_TYPE_1D &&
++         tiling_possible(base_info->format) &&
++         ubwc_possible(NULL, base_info->format, base_info->type,
++                       base_info->flags, base_info->usage, base_info->usage,
++                       physical_device->info, VK_SAMPLE_COUNT_1_BIT, 1,
++                       physical_device->info->props.has_z24uint_s8uint);
++
++      if (compression_control &&
++          (compression_control->flags & VK_IMAGE_COMPRESSION_DISABLED_EXT))
++         ubwc_supported = false;
++
++      compression_props->imageCompressionFlags = ubwc_supported ?
++         VK_IMAGE_COMPRESSION_DEFAULT_EXT :
++         VK_IMAGE_COMPRESSION_DISABLED_EXT;
++   }
++
+    return VK_SUCCESS;
+ 
+ fail:
+--- a/src/freedreno/vulkan/tu_image.cc
++++ b/src/freedreno/vulkan/tu_image.cc
+@@ -12,6 +12,7 @@
+ #include "drm-uapi/drm_fourcc.h"
+ 
+ #include "util/format/u_format.h"
++#include "util/u_atomic.h"
+ #include "util/u_debug.h"
+ #include "vk_android.h"
+ #include "vk_debug_utils.h"
+@@ -521,8 +522,20 @@
+ VkResult
+ tu_image_init(struct tu_device *device, struct tu_image *image,
+               const VkImageCreateInfo *pCreateInfo, uint64_t modifier,
+-              const VkSubresourceLayout *plane_layouts)
+-{
++              const VkSubresourceLayout *plane_layouts,
++              enum tu_image_id_mode id_mode)
++{
++   switch (id_mode) {
++   case TU_IMAGE_ID_ASSIGN:
++      image->id = p_atomic_inc_return(&device->next_image_id);
++      break;
++   case TU_IMAGE_ID_INTERNAL:
++      image->id = TU_IMAGE_ID_INTERNAL_ID;
++      break;
++   case TU_IMAGE_ID_NONE:
++      break;
++   }
++
+    bool ubwc_enabled = true;
+    bool force_linear_tile = false;
+    bool is_mutable = false;
+@@ -667,6 +680,20 @@
+       }
+    }
+ 
++   /* VK_EXT_image_compression_control: honor the application's request to
++    * disable compression for this image.
++    */
++   if (image->vk.compr_flags & VK_IMAGE_COMPRESSION_DISABLED_EXT) {
++      if (ubwc_enabled) {
++         perf_debug(device,
++                    "Disabling UBWC on %dx%d %s resource due to "
++                    "VK_IMAGE_COMPRESSION_DISABLED_EXT",
++                    image->vk.extent.width, image->vk.extent.height,
++                    util_format_name(vk_format_to_pipe_format(image->vk.format)));
++      }
++      ubwc_enabled = false;
++   }
++
+    if (TU_DEBUG(NOUBWC)) {
+       ubwc_enabled = false;
+    }
+@@ -736,15 +763,19 @@
+       struct fdl_explicit_layout plane_layout;
+ 
+       if (plane_layouts) {
+-         /* only expect simple 2D images for now */
+-         if (image->vk.mip_levels != 1 ||
+-            image->vk.array_layers != 1 ||
+-            image->vk.extent.depth != 1)
++         /* Reject mipmap and 3D images; fdl6_layout_image only accepts
++          * explicit pitch for single-mip 2D images.
++          */
++         if (image->vk.mip_levels != 1 || image->vk.extent.depth != 1)
+             return vk_error(device, VK_ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT);
+ 
+          plane_layout.offset = plane_layouts[i].offset;
+          plane_layout.pitch = plane_layouts[i].rowPitch;
+-         /* note: use plane_layouts[0].arrayPitch to support array formats */
++         /* arrayPitch is intentionally not consumed here. fdl6_layout_image
++          * deterministically computes layer_size from the imported pitch,
++          * format, and tiling mode. The per-layer stride is not an independent
++          * parameter, it is fully determined by the single-mip slice layout.
++          */
+       }
+ 
+       layout->tile_mode = tile_mode;
+@@ -878,7 +909,7 @@
+ 
+    result = TU_CALLX(dev, tu_image_init)(
+       dev, img, img->vk.android_deferred_create_info,
+-      eci.drmFormatModifier, a_plane_layouts);
++      eci.drmFormatModifier, a_plane_layouts, TU_IMAGE_ID_ASSIGN);
+    if (result != VK_SUCCESS)
+       return result;
+ 
+@@ -939,16 +970,27 @@
+ 
+       assert(mod_info || drm_explicit_info);
+ 
++      /* VK_IMAGE_COMPRESSION_DISABLED_EXT means the app wants uncompressed
++       * (non-UBWC) storage. Since there's no way to fall back to linear
++       * tiling with an explicit modifier, the QCOM_COMPRESSED modifier must
++       * never be selected while compression is disabled.
++       */
++      bool compression_disabled =
++         image->vk.compr_flags & VK_IMAGE_COMPRESSION_DISABLED_EXT;
++
+       if (mod_info) {
+          modifier = DRM_FORMAT_MOD_LINEAR;
+          for (unsigned i = 0; i < mod_info->drmFormatModifierCount; i++) {
+-            if (mod_info->pDrmFormatModifiers[i] == DRM_FORMAT_MOD_QCOM_COMPRESSED)
++            if (mod_info->pDrmFormatModifiers[i] == DRM_FORMAT_MOD_QCOM_COMPRESSED &&
++                !compression_disabled)
+                modifier = DRM_FORMAT_MOD_QCOM_COMPRESSED;
+          }
+       } else {
+          modifier = drm_explicit_info->drmFormatModifier;
+          assert(modifier == DRM_FORMAT_MOD_LINEAR ||
+                 modifier == DRM_FORMAT_MOD_QCOM_COMPRESSED);
++         assert(modifier != DRM_FORMAT_MOD_QCOM_COMPRESSED ||
++                !compression_disabled);
+          plane_layouts = drm_explicit_info->pPlaneLayouts;
+       }
+    } else {
+@@ -972,7 +1014,8 @@
+    }
+ 
+    result = TU_CALLX(device, tu_image_init)(device, image, pCreateInfo,
+-                                             modifier, plane_layouts);
++                                             modifier, plane_layouts,
++                                             TU_IMAGE_ID_ASSIGN);
+    if (result != VK_SUCCESS)
+       goto fail;
+ 
+@@ -1372,7 +1415,7 @@
+    struct tu_image image = {0};
+ 
+    vk_image_init(&device->vk, &image.vk, pInfo->pCreateInfo);
+-   TU_CALLX(device, tu_image_init)(device, &image, pInfo->pCreateInfo, DRM_FORMAT_MOD_INVALID, NULL);
++   TU_CALLX(device, tu_image_init)(device, &image, pInfo->pCreateInfo, DRM_FORMAT_MOD_INVALID, NULL, TU_IMAGE_ID_NONE);
+ 
+    tu_get_image_memory_requirements(device, &image, pMemoryRequirements);
+ }
+@@ -1389,7 +1432,7 @@
+    struct tu_image image = {0};
+ 
+    vk_image_init(&device->vk, &image.vk, pInfo->pCreateInfo);
+-   TU_CALLX(device, tu_image_init)(device, &image, pInfo->pCreateInfo, DRM_FORMAT_MOD_INVALID, NULL);
++   TU_CALLX(device, tu_image_init)(device, &image, pInfo->pCreateInfo, DRM_FORMAT_MOD_INVALID, NULL, TU_IMAGE_ID_NONE);
+ 
+    tu_get_image_sparse_memory_requirements(device, &image,
+                                            pSparseMemoryRequirementCount,
+@@ -1423,8 +1466,34 @@
+       memcpy_size->size = slice->size0;
+    }
+ 
+-   if (fdl_ubwc_enabled(layout, pSubresource->imageSubresource.mipLevel)) {
+-      /* UBWC starts at offset 0 */
++   VkImageCompressionPropertiesEXT *compression_props =
++      vk_find_struct(pLayout, IMAGE_COMPRESSION_PROPERTIES_EXT);
++   if (compression_props) {
++      compression_props->imageCompressionFixedRateFlags =
++         VK_IMAGE_COMPRESSION_FIXED_RATE_NONE_EXT;
++      compression_props->imageCompressionFlags =
++         fdl_ubwc_enabled(layout, pSubresource->imageSubresource.mipLevel) ?
++            VK_IMAGE_COMPRESSION_DEFAULT_EXT :
++            VK_IMAGE_COMPRESSION_DISABLED_EXT;
++   }
++
++   /* UBWC layout fixups only apply to DRM modifier images. */
++   if (image->vk.tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT &&
++       fdl_ubwc_enabled(layout, pSubresource->imageSubresource.mipLevel)) {
++      /* From the Vulkan 1.4.357 spec, vkGetImageSubresourceLayout():
++       *
++       *    "If the image’s tiling is VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT
++       *     and the image is non-linear, then the returned layout has an
++       *     implementation-dependent meaning; the vendor of the image’s DRM
++       *     format modifier may provide documentation that explains how to
++       *     interpret the returned layout."
++       *
++       * In particular, we report that the subresource offset is the
++       * beginning of any data related to the (single) subresource (in this
++       * case, the UBWC contents), since that value may get queried and
++       * passed as an offset within the FD for the image contents -- the
++       * position of the rest of the image data including uncompressed
++       * contents is implied from the format modifier. */
+       pLayout->subresourceLayout.offset = 0;
+       /* UBWC scanout won't match what the kernel wants if we have levels/layers */
+       assert(image->vk.mip_levels == 1 && image->vk.array_layers == 1);
+@@ -1452,7 +1521,7 @@
+    struct tu_image image = {0};
+ 
+    vk_image_init(&device->vk, &image.vk, pInfo->pCreateInfo);
+-   TU_CALLX(device, tu_image_init)(device, &image, pInfo->pCreateInfo, DRM_FORMAT_MOD_INVALID, NULL);
++   TU_CALLX(device, tu_image_init)(device, &image, pInfo->pCreateInfo, DRM_FORMAT_MOD_INVALID, NULL, TU_IMAGE_ID_NONE);
+ 
+    tu_get_image_subresource_layout(&image, pInfo->pSubresource, pLayout);
+ }
+--- a/src/freedreno/vulkan/tu_image.h
++++ b/src/freedreno/vulkan/tu_image.h
+@@ -43,14 +43,39 @@
+    /* Maximum width/height of tiles for use with this image, or ~0 if no constraints. */
+    uint32_t max_tile_w_constraint_fdm;
+    uint32_t max_tile_h_constraint_fdm;
++
++   /* Identity of the image for RP hashing and analysis, per
++    * tu_image_id_mode. 0 means no identity was assigned and must never
++    * appear on an image that reaches a render pass.
++    */
++   uint64_t id;
+ };
+ VK_DEFINE_NONDISP_HANDLE_CASTS(tu_image, vk.base, VkImage, VK_OBJECT_TYPE_IMAGE)
++
++enum tu_image_id_mode {
++   /* Temporaries for memory-requirement queries: no identity, must never
++    * reach a render pass.
++    */
++   TU_IMAGE_ID_NONE,
++   /* Real images: unique monotonic identity, stable across replays of the
++    * same API call sequence.
++    */
++   TU_IMAGE_ID_ASSIGN,
++   /* Driver-internal scratch attachments (MSRTSS): a shared constant
++    * identity, so that RP hashes don't churn when the scratch images are
++    * reinitialized per framebuffer or per vkCmdBeginRendering.
++    */
++   TU_IMAGE_ID_INTERNAL,
++};
++
++#define TU_IMAGE_ID_INTERNAL_ID UINT64_MAX
+ 
+ template <chip CHIP>
+ VkResult
+ tu_image_init(struct tu_device *device, struct tu_image *image,
+               const VkImageCreateInfo *pCreateInfo, uint64_t modifier,
+-              const VkSubresourceLayout *plane_layouts);
++              const VkSubresourceLayout *plane_layouts,
++              enum tu_image_id_mode id_mode);
+ 
+ struct tu_image_view
+ {
+--- a/src/freedreno/vulkan/tu_knl_kgsl.cc
++++ b/src/freedreno/vulkan/tu_knl_kgsl.cc
+@@ -78,29 +78,21 @@
+ static void kgsl_bo_finish(struct tu_device *dev, struct tu_bo *bo);
+ 
+ static VkResult
+-bo_init_new_dmaheap(struct tu_device *dev, struct tu_bo **out_bo, uint64_t size,
+-                enum tu_bo_alloc_flags flags)
+-{
+-   struct dma_heap_allocation_data alloc = {
+-      .len = size,
+-      .fd_flags = O_RDWR | O_CLOEXEC,
+-   };
+-
+-   int ret;
+-   ret = safe_ioctl(dev->physical_device->kgsl_dma_fd, DMA_HEAP_IOCTL_ALLOC,
+-                    &alloc);
+-
+-   if (ret) {
+-      return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
+-                       "DMA_HEAP_IOCTL_ALLOC failed (%s)", strerror(errno));
+-   }
+-
+-   return tu_bo_init_dmabuf(dev, out_bo, -1, TU_BO_ALLOC_NO_FLAGS, alloc.fd);
+-}
+-
+-static VkResult
+-bo_init_new_ion(struct tu_device *dev, struct tu_bo **out_bo, uint64_t size,
+-                enum tu_bo_alloc_flags flags)
++kgsl_import_allocated_dmabuf(struct tu_device *dev,
++                             struct tu_bo **out_bo,
++                             uint64_t size,
++                             int fd)
++{
++   VkResult result =
++      tu_bo_init_dmabuf(dev, out_bo, size, TU_BO_ALLOC_NO_FLAGS, fd);
++
++   close(fd);
++   return result;
++}
++
++static VkResult
++bo_init_new_ion_fd(struct tu_device *dev, struct tu_bo **out_bo,
++                   uint64_t size, int ion_fd)
+ {
+    struct ion_new_allocation_data alloc = {
+       .len = size,
+@@ -109,19 +101,18 @@
+       .fd = -1,
+    };
+ 
+-   int ret;
+-   ret = safe_ioctl(dev->physical_device->kgsl_dma_fd, ION_IOC_NEW_ALLOC, &alloc);
++   int ret = safe_ioctl(ion_fd, ION_IOC_NEW_ALLOC, &alloc);
+    if (ret) {
+       return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
+                        "ION_IOC_NEW_ALLOC failed (%s)", strerror(errno));
+    }
+ 
+-   return tu_bo_init_dmabuf(dev, out_bo, -1, TU_BO_ALLOC_NO_FLAGS, alloc.fd);
+-}
+-
+-static VkResult
+-bo_init_new_ion_legacy(struct tu_device *dev, struct tu_bo **out_bo, uint64_t size,
+-                       enum tu_bo_alloc_flags flags)
++   return kgsl_import_allocated_dmabuf(dev, out_bo, size, alloc.fd);
++}
++
++static VkResult
++bo_init_new_ion_legacy_fd(struct tu_device *dev, struct tu_bo **out_bo,
++                          uint64_t size, int ion_fd)
+ {
+    struct ion_allocation_data alloc = {
+       .len = size,
+@@ -131,8 +122,7 @@
+       .handle = -1,
+    };
+ 
+-   int ret;
+-   ret = safe_ioctl(dev->physical_device->kgsl_dma_fd, ION_IOC_ALLOC, &alloc);
++   int ret = safe_ioctl(ion_fd, ION_IOC_ALLOC, &alloc);
+    if (ret) {
+       return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
+                        "ION_IOC_ALLOC failed (%s)", strerror(errno));
+@@ -143,7 +133,7 @@
+       .fd = -1,
+    };
+ 
+-   ret = safe_ioctl(dev->physical_device->kgsl_dma_fd, ION_IOC_SHARE, &share);
++   ret = safe_ioctl(ion_fd, ION_IOC_SHARE, &share);
+    if (ret) {
+       return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
+                        "ION_IOC_SHARE failed (%s)", strerror(errno));
+@@ -152,13 +142,75 @@
+    struct ion_handle_data free = {
+       .handle = alloc.handle,
+    };
+-   ret = safe_ioctl(dev->physical_device->kgsl_dma_fd, ION_IOC_FREE, &free);
++   ret = safe_ioctl(ion_fd, ION_IOC_FREE, &free);
+    if (ret) {
++      close(share.fd);
+       return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
+                        "ION_IOC_FREE failed (%s)", strerror(errno));
+    }
+ 
+-   return tu_bo_init_dmabuf(dev, out_bo, -1, TU_BO_ALLOC_NO_FLAGS, share.fd);
++   return kgsl_import_allocated_dmabuf(dev, out_bo, size, share.fd);
++}
++
++static VkResult
++bo_init_new_ion_fallback(struct tu_device *dev, struct tu_bo **out_bo,
++                         uint64_t size)
++{
++   int ion_fd = open("/dev/ion", O_RDONLY);
++   if (ion_fd < 0)
++      return VK_ERROR_OUT_OF_DEVICE_MEMORY;
++
++   struct ion_handle_data free = { .handle = 0 };
++   bool legacy = safe_ioctl(ion_fd, ION_IOC_FREE, &free) >= 0 || errno != ENOTTY;
++
++   VkResult result = legacy ?
++      bo_init_new_ion_legacy_fd(dev, out_bo, size, ion_fd) :
++      bo_init_new_ion_fd(dev, out_bo, size, ion_fd);
++   close(ion_fd);
++   return result;
++}
++
++static VkResult
++bo_init_new_dmaheap(struct tu_device *dev, struct tu_bo **out_bo, uint64_t size,
++                enum tu_bo_alloc_flags flags)
++{
++   struct dma_heap_allocation_data alloc = {
++      .len = size,
++      .fd_flags = O_RDWR | O_CLOEXEC,
++   };
++
++   int ret;
++   ret = safe_ioctl(dev->physical_device->kgsl_dma_fd, DMA_HEAP_IOCTL_ALLOC,
++                    &alloc);
++
++   if (ret) {
++      int dmaheap_errno = errno;
++      VkResult fallback = bo_init_new_ion_fallback(dev, out_bo, size);
++      if (fallback == VK_SUCCESS)
++         return VK_SUCCESS;
++
++      errno = dmaheap_errno;
++      return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
++                       "DMA_HEAP_IOCTL_ALLOC failed (%s)", strerror(errno));
++   }
++
++   return kgsl_import_allocated_dmabuf(dev, out_bo, size, alloc.fd);
++}
++
++static VkResult
++bo_init_new_ion(struct tu_device *dev, struct tu_bo **out_bo, uint64_t size,
++                enum tu_bo_alloc_flags flags)
++{
++   return bo_init_new_ion_fd(dev, out_bo, size,
++                             dev->physical_device->kgsl_dma_fd);
++}
++
++static VkResult
++bo_init_new_ion_legacy(struct tu_device *dev, struct tu_bo **out_bo, uint64_t size,
++                       enum tu_bo_alloc_flags flags)
++{
++   return bo_init_new_ion_legacy_fd(dev, out_bo, size,
++                                    dev->physical_device->kgsl_dma_fd);
+ }
+ 
+ static VkResult
+@@ -244,6 +296,11 @@
+       if (client_iova) {
+          return vk_errorf(dev, VK_ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS,
+                           "cannot allocate an exportable BO with a fixed address");
++      }
++
++      if (dev->physical_device->kgsl_dma_fd < 0) {
++         return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
++                          "no dma-heap or ION fd available for shareable KGSL BO");
+       }
+ 
+       switch(dev->physical_device->kgsl_dma_type) {
+--- a/src/freedreno/vulkan/tu_lrz.cc
++++ b/src/freedreno/vulkan/tu_lrz.cc
+@@ -84,7 +84,10 @@
+  */
+ 
+ static inline void
+-tu_lrz_disable_reason(struct tu_cmd_buffer *cmd, const char *reason) {
++tu_lrz_invalidate(struct tu_cmd_buffer *cmd, const char *reason)
++{
++   cmd->state.lrz.valid = false;
++   cmd->state.rp.lrz_disable_for_next_rp = true;
+    cmd->state.rp.lrz_disable_reason = reason;
+    cmd->state.rp.lrz_disabled_at_draw = cmd->state.rp.drawcall_count;
+    perf_debug(cmd->device, "Disabling LRZ because '%s' at draw %u", reason,
+@@ -95,6 +98,7 @@
+ void
+ tu_lrz_disable_write_for_rp(struct tu_cmd_buffer *cmd, const char *reason)
+ {
++   assert(reason);
+    if (cmd->state.lrz.disable_write_for_rp)
+       return;
+ 
+@@ -195,6 +199,29 @@
+ 
+ template <chip CHIP>
+ static void
++tu_lrz_emit_force_disable_for_rp(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
++{
++   cmd->state.rp.lrz_disable_for_next_rp = true;
++
++   if (CHIP >= A7XX) {
++      const struct tu_reg_value reg = GRAS_SC_BIN_CNTL(CHIP, .force_lrz_dis = true);
++
++      tu_cs_emit_pkt7(cs, CP_REG_RMW, 3);
++      tu_cs_emit(cs, CP_REG_RMW_0_DST_REG(reg.reg));
++      tu_cs_emit(cs, ~0u);
++      tu_cs_emit(cs, reg.value);
++   } else {
++      /* A6XX does not support GRAS_SC_BIN_CNTL.FORCE_LRZ_DIS */
++      tu6_write_lrz_reg(cmd, cs, A6XX_GRAS_LRZ_VIEW_INFO(
++         .base_layer = 0b11111111111,
++         .layer_count = 0b11111111111,
++         .base_mip_level = 0b1111,
++      ));
++   }
++}
++
++template <chip CHIP>
++static void
+ tu6_disable_lrz_via_depth_view(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
+ {
+    /* Disable direction by writing invalid depth view. */
+@@ -246,12 +273,12 @@
+    if ((view->image->vk.create_flags &
+         VK_IMAGE_CREATE_FRAGMENT_DENSITY_MAP_OFFSET_BIT_EXT) &&
+        !clears_depth) {
+-      tu_lrz_disable_reason(cmd, "FRAGMENT_DENSITY_MAP_OFFSET_BIT attachment used without depth attachment clear");
++      tu_lrz_invalidate(cmd, "FRAGMENT_DENSITY_MAP_OFFSET_BIT attachment used without depth attachment clear");
+       return;
+    }
+ 
+    if (!clears_depth && !att->load) {
+-      tu_lrz_disable_reason(cmd, "Depth attachment isn't loaded or cleared");
++      tu_lrz_invalidate(cmd, "Depth attachment isn't loaded or cleared");
+       return;
+    }
+ 
+@@ -343,6 +370,10 @@
+    uint32_t a = VK_ATTACHMENT_UNUSED;
+    for (uint32_t subpass_idx = 0; subpass_idx < cmd->state.pass->subpass_count; subpass_idx++) {
+       const struct tu_subpass *subpass = &cmd->state.pass->subpasses[subpass_idx];
++
++      if (subpass->custom_resolve)
++         continue;
++
+       a = subpass->depth_stencil_attachment.attachment;
+ 
+       if (a != VK_ATTACHMENT_UNUSED && cmd->state.attachments[a]->image->lrz_layout.lrz_total_size) {
+@@ -379,6 +410,10 @@
+    uint32_t prev_depth_a = VK_ATTACHMENT_UNUSED;
+    for (uint32_t subpass_idx = 0; subpass_idx < cmd->state.pass->subpass_count; subpass_idx++) {
+       const struct tu_subpass *subpass = &cmd->state.pass->subpasses[subpass_idx];
++
++      if (subpass->custom_resolve)
++         continue;
++
+       uint32_t a = subpass->depth_stencil_attachment.attachment;
+ 
+       if (a != VK_ATTACHMENT_UNUSED && cmd->state.attachments[a]->image->lrz_layout.lrz_total_size) {
+@@ -395,7 +430,7 @@
+        * and tiling passes, but it is untested and would add complexity for
+        * presumably extremely rare case.
+        */
+-      tu_lrz_disable_reason(cmd, "Several subpasses with different depth attachments");
++      tu_lrz_invalidate(cmd, "Several subpasses with different depth attachments");
+ 
+       for (unsigned i = 0; i < pass->attachment_count; i++) {
+          struct tu_image *image = cmd->state.attachments[i]->image;
+@@ -409,6 +444,26 @@
+        */
+       memset(&cmd->state.lrz, 0, sizeof(cmd->state.lrz));
+       return;
++   }
++
++   for (uint32_t subpass_idx = 0; subpass_idx < pass->subpass_count; subpass_idx++) {
++      const struct tu_subpass *subpass = &pass->subpasses[subpass_idx];
++      uint32_t a = subpass->depth_stencil_attachment.attachment;
++
++      if (subpass->custom_resolve && a != VK_ATTACHMENT_UNUSED) {
++         struct tu_image *image = cmd->state.attachments[a]->image;
++         tu_disable_lrz<CHIP>(cmd, &cmd->cs, image);
++      }
++
++      if (subpass->resolve_depth_stencil) {
++         for (unsigned i = 0; i < subpass->resolve_count; i++) {
++            uint32_t a = subpass->resolve_attachments[i].attachment;
++            if (a == VK_ATTACHMENT_UNUSED || cmd->state.attachments[a]->image->lrz_layout.lrz_total_size == 0)
++               continue;
++
++            tu_disable_lrz<CHIP>(cmd, &cmd->cs, cmd->state.attachments[a]->image);
++         }
++      }
+    }
+ 
+     /* Track LRZ valid state */
+@@ -439,7 +494,14 @@
+ tu_lrz_begin_secondary_cmdbuf(struct tu_cmd_buffer *cmd)
+ {
+    memset(&cmd->state.lrz, 0, sizeof(cmd->state.lrz));
++
+    uint32_t a = cmd->state.subpass->depth_stencil_attachment.attachment;
++
++   if (cmd->state.subpass->custom_resolve) {
++      cmd->state.lrz.valid = a == VK_ATTACHMENT_UNUSED;
++      return;
++   }
++
+    if (a != VK_ATTACHMENT_UNUSED) {
+       const struct tu_render_pass_attachment *att = &cmd->state.pass->attachments[a];
+       tu_lrz_init_secondary(cmd, att);
+@@ -492,6 +554,58 @@
+ }
+ 
+ template <chip CHIP>
++static void
++tu_lrz_clear(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
++             struct tu_image *image, const VkClearValue *clear_value,
++             bool fast_clear)
++{
++   bool has_gpu_tracking =
++      cmd->device->physical_device->info->props.has_lrz_dir_tracking;
++
++   if (fast_clear || has_gpu_tracking) {
++      tu6_write_lrz_cntl<CHIP>(cmd, cs, {
++         .enable = true,
++         .fc_enable = fast_clear,
++         .disable_on_wrong_dir = has_gpu_tracking,
++      });
++
++      /* LRZ_CLEAR.fc_enable + LRZ_CLEAR - clears fast-clear buffer;
++       * LRZ_CLEAR.disable_on_wrong_dir + LRZ_CLEAR - sets direction to
++       *  CUR_DIR_UNSET.
++       *
++       * We do the clear event even if fast-clear is disabled to set the
++       * direction to CUR_DIR_UNSET.
++       */
++      if (CHIP >= A7XX)
++         tu_cs_emit_regs(cs, GRAS_LRZ_DEPTH_CLEAR(CHIP, clear_value->depthStencil.depth));
++      tu_emit_event_write<CHIP>(cmd, cs, FD_LRZ_CLEAR);
++
++      /* The flag RAM may not cover the whole LRZ image. FD_LRZ_CLEAR only
++       * clears the part it does cover, so clear the rest explicitly.
++       */
++      if (fast_clear) {
++         if (!fdl6_lrz_fc_fully_covered(&image->lrz_layout)) {
++            tu6_clear_lrz_partial<CHIP>(cmd, cs, image, clear_value);
++         }
++      }
++   }
++
++   if (!fast_clear) {
++      tu6_clear_lrz<CHIP>(cmd, cs, image, clear_value);
++      /* Even though we disable fast-clear we still have to dirty
++       * fast-clear buffer because both secondary cmdbufs and following
++       * renderpasses won't know that fast-clear is disabled.
++       *
++       * TODO: we could avoid this in renderpass clears if we don't store
++       * depth and don't expect secondary cmdbufs.
++       */
++      if (image->lrz_layout.lrz_fc_size > 0) {
++         tu6_dirty_lrz_fc<CHIP>(cmd, cs, image);
++      }
++   }
++}
++
++template <chip CHIP>
+ void
+ tu_lrz_tiling_begin(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
+ {
+@@ -540,40 +654,13 @@
+       return;
+    }
+ 
+-   if (lrz->fast_clear || lrz->gpu_dir_tracking) {
+-      if (lrz->gpu_dir_tracking) {
+-         tu6_write_lrz_reg(cmd, cs,
+-            A6XX_GRAS_LRZ_VIEW_INFO(.dword = lrz->image_view->view.GRAS_LRZ_VIEW_INFO));
+-      }
+-
+-      tu6_write_lrz_cntl<CHIP>(cmd, cs, {
+-         .enable = true,
+-         .fc_enable = lrz->fast_clear,
+-         .disable_on_wrong_dir = lrz->gpu_dir_tracking,
+-      });
+-
+-      /* LRZ_CLEAR.fc_enable + LRZ_CLEAR - clears fast-clear buffer;
+-       * LRZ_CLEAR.disable_on_wrong_dir + LRZ_CLEAR - sets direction to
+-       *  CUR_DIR_UNSET.
+-       */
+-      if (CHIP >= A7XX)
+-         tu_cs_emit_regs(cs, GRAS_LRZ_DEPTH_CLEAR(CHIP, lrz->depth_clear_value.depthStencil.depth));
+-      tu_emit_event_write<CHIP>(cmd, cs, FD_LRZ_CLEAR);
+-   }
+-
+-   if (!lrz->fast_clear) {
+-      tu6_clear_lrz<CHIP>(cmd, cs, lrz->image_view->image, &lrz->depth_clear_value);
+-      /* Even though we disable fast-clear we still have to dirty
+-       * fast-clear buffer because both secondary cmdbufs and following
+-       * renderpasses won't know that fast-clear is disabled.
+-       *
+-       * TODO: we could avoid this if we don't store depth and don't
+-       * expect secondary cmdbufs.
+-       */
+-      if (lrz->image_view->image->lrz_layout.lrz_fc_size > 0) {
+-         tu6_dirty_lrz_fc<CHIP>(cmd, cs, lrz->image_view->image);
+-      }
+-   }
++   if (lrz->gpu_dir_tracking) {
++      tu6_write_lrz_reg(cmd, cs,
++         A6XX_GRAS_LRZ_VIEW_INFO(.dword = lrz->image_view->view.GRAS_LRZ_VIEW_INFO));
++   }
++
++   tu_lrz_clear<CHIP>(cmd, cs, lrz->image_view->image,
++                      &lrz->depth_clear_value, lrz->fast_clear);
+ }
+ TU_GENX(tu_lrz_tiling_begin);
+ 
+@@ -805,8 +892,9 @@
+    /* If we haven't disabled LRZ during renderpass, we need to disable it here
+     * for next renderpass to not use invalid LRZ values.
+     */
+-   bool disable_for_next_rp = cmd->state.lrz.valid_at_start &&
+-       !cmd->state.lrz.valid;
++   bool disable_for_next_rp =
++      cmd->state.rp.lrz_disable_for_next_rp ||
++      (cmd->state.lrz.valid_at_start && !cmd->state.lrz.valid);
+    /* If the render pass writes depth (with direction) but doesn't set
+     * direction on the GPU, the LRZ buffer cannot be used in subsequent
+     * render passes because the direction information is lost.
+@@ -856,22 +944,12 @@
+          A6XX_GRAS_LRZ_VIEW_INFO(.dword = 0));
+    } else {
+       tu6_emit_lrz_buffer<CHIP>(cs, lrz->image_view->image);
++
+       /* Even though we disable LRZ writes in sysmem mode - there is still
+        * LRZ test, so LRZ should be cleared.
+        */
+-      if (lrz->fast_clear) {
+-         tu6_write_lrz_cntl<CHIP>(cmd, &cmd->cs, {
+-            .enable = true,
+-            .fc_enable = true,
+-         });
+-
+-         if (CHIP >= A7XX)
+-            tu_cs_emit_regs(cs, GRAS_LRZ_DEPTH_CLEAR(CHIP, lrz->depth_clear_value.depthStencil.depth));
+-         tu_emit_event_write<CHIP>(cmd, &cmd->cs, FD_LRZ_CLEAR);
+-         tu_emit_event_write<CHIP>(cmd, &cmd->cs, FD_LRZ_FLUSH);
+-      } else {
+-         tu6_clear_lrz<CHIP>(cmd, cs, lrz->image_view->image, &lrz->depth_clear_value);
+-      }
++      tu_lrz_clear<CHIP>(cmd, cs, lrz->image_view->image,
++                         &lrz->depth_clear_value, lrz->fast_clear);
+    }
+ }
+ TU_GENX(tu_lrz_sysmem_begin);
+@@ -994,20 +1072,9 @@
+          .base_mip_level = range->baseMipLevel,
+    ));
+ 
+-   tu6_write_lrz_cntl<CHIP>(cmd, &cmd->cs, {
+-      .enable = true,
+-      .fc_enable = fast_clear,
+-      .disable_on_wrong_dir = true,
+-   });
+-
+-   if (CHIP >= A7XX)
+-      tu_cs_emit_regs(&cmd->cs, GRAS_LRZ_DEPTH_CLEAR(CHIP, pDepthStencil->depth));
+-   tu_emit_event_write<CHIP>(cmd, &cmd->cs, FD_LRZ_CLEAR);
++   tu_lrz_clear<CHIP>(cmd, &cmd->cs, image,
++                      (const VkClearValue *) pDepthStencil, fast_clear);
+    tu_emit_event_write<CHIP>(cmd, &cmd->cs, FD_LRZ_FLUSH);
+-
+-   if (!fast_clear) {
+-      tu6_clear_lrz<CHIP>(cmd, &cmd->cs, image, (const VkClearValue*) pDepthStencil);
+-   }
+ }
+ TU_GENX(tu_lrz_clear_depth_image);
+ 
+@@ -1017,14 +1084,37 @@
+                                  const char *reason)
+ {
+    assert(cmd->state.pass);
+-
+-   tu_lrz_disable_reason(cmd, reason);
+-
+-   cmd->state.lrz.valid = false;
++   assert(reason);
++
++   tu_lrz_invalidate(cmd, reason);
+    cmd->state.dirty |= TU_CMD_DIRTY_LRZ;
+ }
+ TU_GENX(tu_lrz_disable_during_renderpass);
+ 
++template <chip CHIP>
++static void
++tu_lrz_emit_disable_write_for_rp(struct tu_cs *cs)
++{
++   /* Don't disable LRZ feedback during sysmem rendering or per-tile rendering. */
++   tu_cond_exec_start(cs, CP_COND_REG_EXEC_0_MODE(RENDER_MODE) | CP_COND_REG_EXEC_0_BINNING);
++
++   const struct tu_reg_value gras_cs_bin_cntl = GRAS_SC_BIN_CNTL(CHIP, .force_lrz_write_dis = true);
++   const struct tu_reg_value rb_cntl = RB_CNTL(CHIP, .force_lrz_write_dis = true);
++
++   tu_cs_emit_pkt7(cs, CP_REG_RMW, 3);
++   tu_cs_emit(cs, CP_REG_RMW_0_DST_REG(gras_cs_bin_cntl.reg));
++   tu_cs_emit(cs, ~0u);
++   tu_cs_emit(cs, gras_cs_bin_cntl.value);
++
++   tu_cs_emit_pkt7(cs, CP_REG_RMW, 3);
++   tu_cs_emit(cs, CP_REG_RMW_0_DST_REG(rb_cntl.reg));
++   tu_cs_emit(cs, ~0u);
++   tu_cs_emit(cs, rb_cntl.value);
++
++   tu_cond_exec_end(cs);
++}
++
++template <chip CHIP>
+ void
+ tu_lrz_flush_valid_at_secondary_rp_boundary(
+    struct tu_cmd_buffer *cmd,
+@@ -1034,26 +1124,30 @@
+    const bool lrz_blending_skipped_color_writes =
+       cmd->state.lrz.color_written_with_z_test &&
+       secondary_lrz.has_lrz_write_with_skipped_color_writes;
+-   /* Even if state is valid, we cannot be sure that secondary
+-    * command buffer has the same sticky disable_write_for_rp.
+-    */
+-   if (cmd->state.lrz.valid && !cmd->state.lrz.disable_write_for_rp &&
+-       !lrz_blending_skipped_color_writes)
+-      return;
+-
+-   if (lrz_blending_skipped_color_writes) {
+-      tu_lrz_disable_reason(cmd, "Depth write + no color writes with secondary cmdbuf");
+-   } else if (cmd->state.lrz.disable_write_for_rp) {
+-      tu_lrz_disable_reason(cmd, "Disabled LRZ write with secondary cmdbuf");
+-   }
+-
+-   tu6_write_lrz_reg(cmd, cs, A6XX_GRAS_LRZ_VIEW_INFO(
+-      .base_layer = 0b11111111111,
+-      .layer_count = 0b11111111111,
+-      .base_mip_level = 0b1111,
+-   ));
+-}
+-
++   const bool lrz_valid = cmd->state.lrz.valid && secondary_lrz.valid;
++   const bool disable_write_for_rp =
++      cmd->state.lrz.disable_write_for_rp || secondary_lrz.disable_write_for_rp || lrz_blending_skipped_color_writes;
++
++   if (lrz_valid && !disable_write_for_rp)
++      return;
++
++   if (lrz_valid) {
++      /* Secondary command buffers cannot inherit the sticky write-disable state. */
++      if (!cmd->state.lrz.disable_write_for_rp) {
++         const char *reason = lrz_blending_skipped_color_writes ? "Depth write + no color writes with secondary cmdbuf"
++                                                                : "Disabled LRZ write in secondary cmdbuf";
++         tu_lrz_disable_write_for_rp(cmd, reason);
++      }
++
++      tu_lrz_emit_disable_write_for_rp<CHIP>(cs);
++      return;
++   }
++
++   tu_lrz_emit_force_disable_for_rp<CHIP>(cmd, cs);
++}
++TU_GENX(tu_lrz_flush_valid_at_secondary_rp_boundary);
++
++template <chip CHIP>
+ void
+ tu_lrz_flush_valid_at_suspending_rp_boundary(struct tu_cmd_buffer *cmd,
+                                              struct tu_cs *cs)
+@@ -1061,15 +1155,14 @@
+    if (cmd->state.lrz.valid && !cmd->state.lrz.disable_write_for_rp)
+       return;
+ 
+-   if (cmd->state.lrz.disable_write_for_rp)
+-      tu_lrz_disable_reason(cmd, "Disabled LRZ write at renderpass suspend");
+-
+-   tu6_write_lrz_reg(cmd, cs, A6XX_GRAS_LRZ_VIEW_INFO(
+-      .base_layer = 0b11111111111,
+-      .layer_count = 0b11111111111,
+-      .base_mip_level = 0b1111,
+-   ));
+-}
++   if (cmd->state.lrz.valid) {
++      tu_lrz_emit_disable_write_for_rp<CHIP>(cs);
++      return;
++   }
++
++   tu_lrz_emit_force_disable_for_rp<CHIP>(cmd, cs);
++}
++TU_GENX(tu_lrz_flush_valid_at_suspending_rp_boundary);
+ 
+ template <chip CHIP>
+ static struct __GRAS_LRZ_CNTL
+@@ -1116,7 +1209,8 @@
+    gras_lrz_cntl.z_write_enable = z_write_enable;
+    gras_lrz_cntl.z_bounds_enable = z_bounds_enable;
+    gras_lrz_cntl.fc_enable = cmd->state.lrz.fast_clear;
+-   gras_lrz_cntl.dir_write = cmd->state.lrz.gpu_dir_tracking;
++   gras_lrz_cntl.dir_write = cmd->state.lrz.gpu_dir_tracking &&
++      z_write_enable;
+    gras_lrz_cntl.disable_on_wrong_dir = cmd->state.lrz.gpu_dir_tracking;
+ 
+    if (CHIP >= A7XX)
+@@ -1125,7 +1219,6 @@
+    /* LRZ is disabled until it is cleared, which means that one "wrong"
+     * depth test or shader could disable LRZ until depth buffer is cleared.
+     */
+-   bool disable_lrz = false;
+    bool temporary_disable_lrz = false;
+ 
+    /* What happens in FS could affect LRZ, e.g.: writes to gl_FragDepth or early
+@@ -1173,8 +1266,7 @@
+          perf_debug(cmd->device, "Skipping LRZ due to FS");
+          temporary_disable_lrz = true;
+       } else {
+-         tu_lrz_disable_reason(cmd, "FS writes depth or has side-effects (TODO: fix for gpu-direction-tracking case)");
+-         disable_lrz = true;
++         tu_lrz_invalidate(cmd, "FS writes depth or has side-effects (TODO: fix for gpu-direction-tracking case)");
+       }
+    }
+ 
+@@ -1194,8 +1286,7 @@
+        * so if there is a depth write - LRZ must be disabled.
+        */
+       if (z_write_enable) {
+-         tu_lrz_disable_reason(cmd, "Depth write + ALWAYS/NOT_EQUAL");
+-         disable_lrz = true;
++         tu_lrz_invalidate(cmd, "Depth write + ALWAYS/NOT_EQUAL");
+          gras_lrz_cntl.dir = LRZ_DIR_INVALID;
+       } else {
+          perf_debug(cmd->device, "Skipping LRZ due to ALWAYS/NOT_EQUAL");
+@@ -1238,8 +1329,7 @@
+        lrz_direction != TU_LRZ_UNKNOWN &&
+        cmd->state.lrz.prev_direction != lrz_direction) {
+       if (z_write_enable) {
+-         tu_lrz_disable_reason(cmd, "Depth write + compare-op direction change");
+-         disable_lrz = true;
++         tu_lrz_invalidate(cmd, "Depth write + compare-op direction change");
+       } else {
+          perf_debug(cmd->device, "Skipping LRZ due to direction change");
+          temporary_disable_lrz = true;
+@@ -1344,9 +1434,6 @@
+       tu_lrz_disable_write_for_rp(cmd, "stencil write based on depth test");
+    }
+ 
+-   if (disable_lrz)
+-      cmd->state.lrz.valid = false;
+-
+    if (cmd->state.lrz.disable_write_for_rp)
+       gras_lrz_cntl.lrz_write = false;
+ 
+--- a/src/freedreno/vulkan/tu_lrz.h
++++ b/src/freedreno/vulkan/tu_lrz.h
+@@ -124,12 +124,14 @@
+ tu_lrz_disable_during_renderpass(struct tu_cmd_buffer *cmd,
+                                  const char *reason);
+ 
++template <chip CHIP>
+ void
+ tu_lrz_flush_valid_at_secondary_rp_boundary(
+    struct tu_cmd_buffer *cmd,
+    const struct tu_lrz_state &secondary_lrz,
+    struct tu_cs *cs);
+ 
++template <chip CHIP>
+ void
+ tu_lrz_flush_valid_at_suspending_rp_boundary(struct tu_cmd_buffer *cmd,
+                                              struct tu_cs *cs);
+--- a/src/freedreno/vulkan/tu_pass.cc
++++ b/src/freedreno/vulkan/tu_pass.cc
+@@ -358,7 +358,7 @@
+ 
+             if ((att[a].finalLayout != subpass->pDepthStencilAttachment->layout ||
+                 stencil_final_layout != stencil_layout) &&
+-                !att_used[a] && !has_external_src[i])
++                !att_used[a] && !has_external_dst[i])
+                dst_implicit_dep = true;
+             att_used[a] = true;
+       }
+@@ -741,6 +741,16 @@
+    if (pass->attachment_count == 0)
+       return;
+ 
++   bool custom_resolve_depth_stencil = false;
++   for (uint32_t i = 0; i < pass->subpass_count; i++) {
++      const struct tu_subpass *subpass = &pass->subpasses[i];
++      if (subpass->custom_resolve && subpass->depth_stencil_attachment.attachment != VK_ATTACHMENT_UNUSED &&
++          (subpass->depth_used || subpass->stencil_used)) {
++         custom_resolve_depth_stencil = true;
++         break;
++      }
++   }
++
+    for (enum tu_gmem_layout layout = (enum tu_gmem_layout) 0;
+         layout < TU_GMEM_LAYOUT_COUNT;
+         layout = (enum tu_gmem_layout)(layout + 1)) {
+@@ -808,9 +818,12 @@
+        * result:  nblocks = {12, 52}, pixels = 196608
+        * optimal: nblocks = {13, 51}, pixels = 208896
+        */
+-      uint32_t gmem_size = layout == TU_GMEM_LAYOUT_FULL
+-                              ? phys_dev->usable_gmem_size_gmem
+-                              : phys_dev->config_gmem.color_ccu_offset;
++      uint32_t gmem_size = phys_dev->usable_gmem_size_gmem;
++      if (layout == TU_GMEM_LAYOUT_AVOID_CCU) {
++         gmem_size = MIN2(gmem_size, phys_dev->config_gmem.color_ccu_offset);
++         if (custom_resolve_depth_stencil)
++            gmem_size = MIN2(gmem_size, phys_dev->config_gmem.depth_ccu_offset);
++      }
+       uint32_t gmem_blocks = gmem_size / gmem_align;
+       uint32_t offset = 0, pixels = ~0u, i;
+       bool layout_impossible = false;
+@@ -1416,7 +1429,8 @@
+       resolve_subpass->samples = VK_SAMPLE_COUNT_1_BIT;
+       resolve_subpass->color_count = info->colorAttachmentCount;
+       resolve_subpass->input_count = info->colorAttachmentCount + 1;
+-      resolve_subpass->color_attachments = cmd_buffer->dynamic_resolve_attachments;
++      resolve_subpass->color_attachments =
++         cmd_buffer->dynamic_custom_resolve_attachments;
+       resolve_subpass->input_attachments = cmd_buffer->dynamic_input_attachments;
+       resolve_subpass->multiview_mask = info->viewMask;
+       resolve_subpass->legacy_dithering_enabled = info->flags &
+@@ -1429,12 +1443,16 @@
+ 
+       resolve_subpass->depth_stencil_attachment.attachment = VK_ATTACHMENT_UNUSED;
+       pass->subpass_count = 2;
+-      subpass->resolve_count = 0;
+    } else {
+-      subpass->resolve_attachments = cmd_buffer->dynamic_resolve_attachments;
+-      subpass->resolve_count = info->colorAttachmentCount;
+       pass->subpass_count = 1;
+    }
++
++   /* The main subpass keeps its own resolve list either way: a pass with
++    * custom resolves can still resolve other attachments through the
++    * fixed-function path.
++    */
++   subpass->resolve_attachments = cmd_buffer->dynamic_resolve_attachments;
++   subpass->resolve_count = info->colorAttachmentCount;
+ 
+    pass->attachments = cmd_buffer->dynamic_rp_attachments;
+ 
+@@ -1471,6 +1489,10 @@
+          subpass->input_attachments[i + 1].attachment = VK_ATTACHMENT_UNUSED;
+          if (subpass->resolve_attachments)
+             subpass->resolve_attachments[i].attachment = VK_ATTACHMENT_UNUSED;
++         if (pass->subpass_count > 1) {
++            resolve_subpass->color_attachments[i].attachment =
++               VK_ATTACHMENT_UNUSED;
++         }
+          subpass->unresolve_attachments[i].attachment = VK_ATTACHMENT_UNUSED;
+          continue;
+       }
+@@ -1536,11 +1558,16 @@
+                resolve_att->used_views = info->viewMask;
+                resolve_att->resolve_views = 0;
+                resolve_subpass->color_attachments[i].attachment = a++;
++               subpass->resolve_attachments[i].attachment = VK_ATTACHMENT_UNUSED;
+             } else {
+                subpass->resolve_attachments[i].attachment = a++;
+                att->will_be_resolved = true;
+                resolve_att->resolve_views = info->viewMask;
+                resolve_att->used_views = 0;
++               if (pass->subpass_count > 1) {
++                  resolve_subpass->color_attachments[i].attachment =
++                     VK_ATTACHMENT_UNUSED;
++               }
+             }
+          } else {
+             if (subpass->resolve_count)
+@@ -1548,6 +1575,9 @@
+             att->will_be_resolved = false;
+          }
+       }
++
++      /* Color attachments in the main subpass may be used as input attachments in the custom resolve subpass */
++      att->last_subpass_idx = (info->flags & VK_RENDERING_CUSTOM_RESOLVE_BIT_EXT) ? 1 : 0;
+ 
+       if (att_is_msrtss)
+          pass->has_msrtss = true;
+@@ -1656,21 +1686,36 @@
+                   subpass->resolve_depth_stencil = true;
+                   resolve_att->resolve_views = info->viewMask;
+                   resolve_att->used_views = 0;
++                  if (pass->subpass_count > 1) {
++                     resolve_subpass->depth_stencil_attachment.attachment =
++                        VK_ATTACHMENT_UNUSED;
++                  }
+                }
+             } else {
+                att->will_be_resolved = false;
+             }
+          }
++
++         /* Color attachments in the main subpass may be used as input attachments in the custom resolve subpass */
++         att->last_subpass_idx = (info->flags & VK_RENDERING_CUSTOM_RESOLVE_BIT_EXT) ? 1 : 0;
+ 
+          if (att_is_msrtss)
+             pass->has_msrtss = true;
+       } else {
+          subpass->depth_stencil_attachment.attachment = VK_ATTACHMENT_UNUSED;
+          subpass->input_attachments[0].attachment = VK_ATTACHMENT_UNUSED;
++         if (pass->subpass_count > 1) {
++            resolve_subpass->depth_stencil_attachment.attachment =
++               VK_ATTACHMENT_UNUSED;
++         }
+       }
+    } else {
+       subpass->depth_stencil_attachment.attachment = VK_ATTACHMENT_UNUSED;
+       subpass->input_attachments[0].attachment = VK_ATTACHMENT_UNUSED;
++      if (pass->subpass_count > 1) {
++         resolve_subpass->depth_stencil_attachment.attachment =
++            VK_ATTACHMENT_UNUSED;
++      }
+    }
+ 
+    /* We have to set this early for tu_render_pass_disable_fdm() to work. We
+@@ -1724,14 +1769,6 @@
+       resolve_subpass->fsr_attachment_texel_size =
+          subpass->fsr_attachment_texel_size;
+       resolve_subpass->fsr_attachment = subpass->fsr_attachment;
+-
+-      /* We don't do stores on vkCmdBeginCustomResolveEXT, so move them
+-       * after custom resolve.
+-       */
+-      for (uint32_t i = 0; i < pass->user_attachment_count; i++) {
+-         struct tu_render_pass_attachment *att = &pass->attachments[i];
+-         att->last_subpass_idx = 1;
+-      }
+ 
+       /* Even though content of any depth/stencil resolve attachment is
+        * undefined at the start of custom resolve, we still have to be
+--- a/src/freedreno/vulkan/tu_tile_config.cc
++++ b/src/freedreno/vulkan/tu_tile_config.cc
+@@ -526,7 +526,8 @@
+                    const struct tu_tiling_config *tiling,
+                    const struct tu_framebuffer *fb,
+                    const struct tu_vsc_config *vsc,
+-                   const VkOffset2D *fdm_offsets)
++                   const VkOffset2D *fdm_offsets,
++                   bool custom_resolve_subsampled)
+ {
+    u_worklist worklist;
+    u_worklist_init(&worklist, vsc->tile_count.width * vsc->tile_count.height,
+@@ -553,6 +554,7 @@
+          }
+ 
+          tile->subsampled = true;
++         tile->custom_resolve_subsampled = custom_resolve_subsampled;
+          tile->worklist_idx = y * vsc->tile_count.width + x;
+ 
+          u_worklist_push_tail(&worklist, tile, worklist_idx);
+@@ -788,11 +790,12 @@
+       }
+    }
+ 
+-   if (cmd->state.fdm_subsampled &&
++   if (cmd->state.fdm_any_subsampled &&
+        vsc->tile_count.width * vsc->tile_count.height <= TU_SUBSAMPLED_MAX_BINS) {
+       tu_calc_subsampled(tiles, cmd->device->physical_device,
+                          cmd->state.tiling, cmd->state.framebuffer,
+-                         vsc, fdm_offsets);
++                         vsc, fdm_offsets,
++                         cmd->state.fdm_custom_resolve_subsampled);
+    }
+ 
+    return tiles;
+--- a/src/freedreno/vulkan/tu_tile_config.h
++++ b/src/freedreno/vulkan/tu_tile_config.h
+@@ -20,9 +20,14 @@
+    uint32_t visible_views;
+    
+    /* Whether to use subsampled_pos instead of the normal origin in
+-    * framebuffer space when storing this tile.
++    * framebuffer space when storing this tile for subsampled images.
+     */
+    bool subsampled;
++
++   /* If subsampled is true, whether custom resolves store to subsampled
++    * images or not. If false, custom resolves ignore subsampled state.
++    */
++   bool custom_resolve_subsampled;
+ 
+    /* If subsampled is true, whether this is a border tile that may not be
+     * aligned.

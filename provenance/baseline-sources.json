@@ -1,0 +1,62 @@
+[
+  {
+    "path": "src/compiler/spirv/spirv_to_nir.c",
+    "upstreamSha256": "3c0d4543df0242606c521cf8dacc5597e9d1a2d7af280a2e79f4eeead97e3c49",
+    "baselineSha256": "9f907ada1629438382206e12b5d96b0730d272a7a1574979ea09df1a15f8ecb7"
+  },
+  {
+    "path": "src/freedreno/ir3/ir3_disk_cache.c",
+    "upstreamSha256": "affca316a2c810544e812420d0e1ec4230230d01f3843c9a2a5ffa95db6e9748",
+    "baselineSha256": "06cb72ce82100ab842ae1b0caf1ac97d89df30fa9d8f189ac46e56ff2f85dc5d"
+  },
+  {
+    "path": "src/freedreno/vulkan/tu_cmd_buffer.cc",
+    "upstreamSha256": "80da2bab10b2c37a24e280acda8b1bb28e4aa120a3a251bf17d0e073e683e106",
+    "baselineSha256": "6d17ec64fa4d1b910e6ab49ce196c6e152bf18136e00e05a197f878a4f0c80cf"
+  },
+  {
+    "path": "src/freedreno/vulkan/tu_device.cc",
+    "upstreamSha256": "d2d8f507cb0e0802e25db49254ebb075fe9886a054bd4bc3235270c0052bbafa",
+    "baselineSha256": "a49630838c20682a29cd78e614fbe460f1ad24fb5a52255c9506ec19bcba7925"
+  },
+  {
+    "path": "src/freedreno/vulkan/tu_knl.cc",
+    "upstreamSha256": "e979c0696c93a4079e39495f58fedb9f98a744fbf88cae4dad5670b1fc14d02d",
+    "baselineSha256": "6c978b4c024dbea06828d9f74cc9ee29e65ce6d14ec7eba6798cd2513f8e7613"
+  },
+  {
+    "path": "src/freedreno/vulkan/tu_knl.h",
+    "upstreamSha256": "a0fc9b9a7a813901612a3fc92ab83519d8c3962132195a09b12b2c19088757e2",
+    "baselineSha256": "8472f8e4ae533ed699b6ac1d09093b98c5715be9a8834ff84d89349e596f524b"
+  },
+  {
+    "path": "src/freedreno/vulkan/tu_knl_kgsl.cc",
+    "upstreamSha256": "96d6612841517adc44c1ae07491da5a0958c58579582559010d90da9f1890674",
+    "baselineSha256": "490022fe225b289ee317eabae317af564cd97c872fc758bae8f11f4d7e477a0f"
+  },
+  {
+    "path": "src/freedreno/vulkan/tu_pipeline.cc",
+    "upstreamSha256": "3c0c6d94d72e45ed8e8f9ed53bad74a9727d782346a8c761857d0bf1c4cb60df",
+    "baselineSha256": "a6a37e7b1b977e40225e1ac171664e62e64bfe7efbeb2139517cedfe0d8efe40"
+  },
+  {
+    "path": "src/freedreno/vulkan/tu_shader.cc",
+    "upstreamSha256": "741212e6c6d8a55c38bc5514f8d6da17f054c50d64014855a1e21dffee13b03e",
+    "baselineSha256": "2597bd131a66ee446432c168794dd8365ac9f6518b8d8ec47e8a2bb8abcaf66b"
+  },
+  {
+    "path": "src/freedreno/vulkan/tu_tile_config.cc",
+    "upstreamSha256": "60898eb89e6fd705e9d16318c48a74edaa614c350f18072bf6af78621fb99438",
+    "baselineSha256": "e6e763f0b705f679e7b1be77acbbb0e340e5396ba9133f497fe565cc92010dd1"
+  },
+  {
+    "path": "src/util/u_gralloc/u_gralloc_fallback.c",
+    "upstreamSha256": "2aff5bd509e852c597b23b152bcbf79a0719980d85a466a4bef6f4c1903e2dce",
+    "baselineSha256": "2641f97771cf581a76f2ab0726d8180c058d49584eb9eb7d7d1b719c9f15de5b"
+  },
+  {
+    "path": "src/vulkan/util/vk_extensions.py",
+    "upstreamSha256": "4861258a863fb7d8af4c1778755cf3fbe005f2452ad8bba828dfee4003a32043",
+    "baselineSha256": "6044493b4323046b804dba27995073bd771bf5001592f60a49bb382b3564dee4"
+  }
+]

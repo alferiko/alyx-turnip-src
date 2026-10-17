@@ -1,0 +1,184 @@
+--- a/src/freedreno/vulkan/tu_shader.cc
++++ b/src/freedreno/vulkan/tu_shader.cc
+@@ -12,2 +12,3 @@
+ #include "util/macros.h"
++#include "util/hash_table.h"
+ #include "util/mesa-blake3.h"
+@@ -2896,2 +2897,138 @@
+ 
++/* Device-local sharing of immutable binning code only. Pipeline states,
++ * constants, VFD/VPC and private-memory bindings remain shader-owned. Keep the
++ * original allocation layout for this experiment: an entry pins its source BO
++ * until the last shader reference disappears, independently of that owner. */
++struct tu_binning_binary_key {
++   uint32_t hash, size;
++   bool double_threadsize;
++   const void *bytes;
++};
++
++struct tu_binning_binary {
++   tu_binning_binary_key key;
++   struct tu_bo *bo;
++   uint64_t iova;
++   uint32_t refs;
++};
++
++struct tu_binning_binary_cache {
++   struct hash_table *table;
++   uint64_t creates, hits, releases;
++};
++
++static uint32_t
++tu_binning_binary_hash(const void *key)
++{
++   return static_cast<const tu_binning_binary_key *>(key)->hash;
++}
++
++static bool
++tu_binning_binary_equal(const void *a, const void *b)
++{
++   const auto *x = static_cast<const tu_binning_binary_key *>(a);
++   const auto *y = static_cast<const tu_binning_binary_key *>(b);
++   return x->size == y->size && x->double_threadsize == y->double_threadsize &&
++          !memcmp(x->bytes, y->bytes, x->size);
++}
++
++/* Caller holds pipeline_mutex. Allocation failure preserves the original code
++ * address; sharing must not add a shader-creation failure path. */
++static uint64_t
++tu_reference_binning_binary_locked(tu_device *dev, const ir3_shader_variant *v,
++                                  tu_suballoc_bo *owner, uint64_t own_iova,
++                                  tu_binning_binary **reference)
++{
++   auto *cache = dev->binning_binary_cache;
++   if (!cache) {
++      cache = static_cast<tu_binning_binary_cache *>(vk_zalloc(
++         &dev->vk.alloc, sizeof(*cache), 8, VK_SYSTEM_ALLOCATION_SCOPE_DEVICE));
++      if (!cache) return own_iova;
++      cache->table = _mesa_hash_table_create(NULL, tu_binning_binary_hash,
++                                            tu_binning_binary_equal);
++      if (!cache->table) {
++         vk_free(&dev->vk.alloc, cache);
++         return own_iova;
++      }
++      dev->binning_binary_cache = cache;
++   }
++   const tu_binning_binary_key key = {
++      _mesa_hash_data(v->bin, v->info.size), v->info.size,
++      v->info.double_threadsize, v->bin,
++   };
++   if (auto *found = _mesa_hash_table_search(cache->table, &key)) {
++      auto *binary = static_cast<tu_binning_binary *>(found->data);
++      if (binary->refs == UINT32_MAX) return own_iova;
++      ++binary->refs;
++      ++cache->hits;
++      *reference = binary;
++      return binary->iova;
++   }
++   auto *binary = static_cast<tu_binning_binary *>(vk_zalloc(
++      &dev->vk.alloc, sizeof(tu_binning_binary), 8, VK_SYSTEM_ALLOCATION_SCOPE_DEVICE));
++   if (!binary) return own_iova;
++   binary->key = key;
++   binary->key.bytes = static_cast<const char *>(tu_suballoc_bo_map(owner)) +
++                       (own_iova - owner->iova);
++   binary->iova = own_iova;
++   binary->refs = 1;
++   if (!_mesa_hash_table_insert(cache->table, &binary->key, binary)) {
++      vk_free(&dev->vk.alloc, binary);
++      return own_iova;
++   }
++   binary->bo = tu_bo_get_ref(owner->bo);
++   ++cache->creates;
++   *reference = binary;
++   return own_iova;
++}
++
++static uint64_t
++tu_reference_binning_binary(tu_device *dev, const ir3_shader_variant *v,
++                           tu_suballoc_bo *owner, uint64_t own_iova,
++                           tu_binning_binary **reference)
++{
++   if (!v || v->type != MESA_SHADER_VERTEX || !own_iova) return own_iova;
++   pthread_mutex_lock(&dev->pipeline_mutex);
++   const uint64_t result = tu_reference_binning_binary_locked(dev, v, owner,
++                                                            own_iova, reference);
++   pthread_mutex_unlock(&dev->pipeline_mutex);
++   return result;
++}
++
++/* Caller holds pipeline_mutex, just like pipeline_suballoc destruction. */
++static void
++tu_release_binning_binary(tu_device *dev, tu_binning_binary *binary)
++{
++   if (!binary) return;
++   auto *cache = dev->binning_binary_cache;
++   assert(binary->refs > 0);
++   ++cache->releases;
++   if (--binary->refs) return;
++   _mesa_hash_table_remove_key(cache->table, &binary->key);
++   tu_bo_finish(dev, binary->bo);
++   vk_free(&dev->vk.alloc, binary);
++}
++
++void
++tu_binning_binary_cache_finish(tu_device *dev)
++{
++   auto *cache = dev->binning_binary_cache;
++   if (!cache) return;
++   if (getenv("ALYX_BINNING_REUSE_AUDIT"))
++      mesa_logi("ALYX_BINNING_REUSE creates=%" PRIu64 " hits=%" PRIu64 " releases=%" PRIu64 " live=%u",
++                cache->creates, cache->hits, cache->releases,
++                _mesa_hash_table_num_entries(cache->table));
++   /* Valid applications have destroyed their pipelines; mem_cache and internal
++    * shaders have also been destroyed before this device teardown hook. */
++   assert(_mesa_hash_table_num_entries(cache->table) == 0);
++   hash_table_foreach(cache->table, entry) {
++      auto *binary = static_cast<tu_binning_binary *>(entry->data);
++      tu_bo_finish(dev, binary->bo);
++      vk_free(&dev->vk.alloc, binary);
++   }
++   _mesa_hash_table_destroy(cache->table, NULL);
++   vk_free(&dev->vk.alloc, cache);
++   dev->binning_binary_cache = NULL;
++}
++
+ static uint64_t
+@@ -2998,2 +3135,6 @@
+    struct tu_cs sub_cs;
++   binning_iova = tu_reference_binning_binary(dev, binning, &shader->bo,
++                                              binning_iova, &shader->shared_binning[0]);
++   safe_const_binning_iova = tu_reference_binning_binary(dev, safe_const_binning,
++      &shader->bo, safe_const_binning_iova, &shader->shared_binning[1]);
+    tu_cs_begin_sub_stream(&shader->cs, xs_size +
+@@ -3943,2 +4084,4 @@
+    pthread_mutex_lock(&dev->pipeline_mutex);
++   tu_release_binning_binary(dev, shader->shared_binning[0]);
++   tu_release_binning_binary(dev, shader->shared_binning[1]);
+    tu_suballoc_bo_free(&dev->pipeline_suballoc, &shader->bo);
+--- a/src/freedreno/vulkan/tu_shader.h
++++ b/src/freedreno/vulkan/tu_shader.h
+@@ -71,2 +71,3 @@
+    struct tu_bo *pvtmem_bo;
++   struct tu_binning_binary *shared_binning[2];
+ 
+@@ -262,2 +263,4 @@
+ 
++void tu_binning_binary_cache_finish(struct tu_device *dev);
++
+ #endif /* TU_SHADER_H */
+--- a/src/freedreno/vulkan/tu_device.cc
++++ b/src/freedreno/vulkan/tu_device.cc
+@@ -3269,2 +3269,3 @@
+ fail_global_bo_map:
++   tu_binning_binary_cache_finish(device);
+    TU_RMV(resource_destroy, device, device->global_bo);
+@@ -3341,2 +3342,3 @@
+    vk_pipeline_cache_destroy(device->mem_cache, &device->vk.alloc);
++   tu_binning_binary_cache_finish(device);
+ 
+--- a/src/freedreno/vulkan/tu_device.h
++++ b/src/freedreno/vulkan/tu_device.h
+@@ -349,2 +349,3 @@
+    mtx_t pipeline_mutex;
++   struct tu_binning_binary_cache *binning_binary_cache;
+ 

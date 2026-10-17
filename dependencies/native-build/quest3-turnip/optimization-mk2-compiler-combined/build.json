@@ -1,0 +1,253 @@
+{
+  "baselineSha256": "7171e6f718f582f08bb20e57a10c9e066d434241e984085cb3695187f51f90da",
+  "releaseSha256": "abf6363b138f501b1a813ba5c030735282c307e74a59f14658e021ca9482f117",
+  "patches": [
+    {
+      "path": "tests/turnip_diagnostics/render-correctness.patch",
+      "sha256": "a99b65ca16f83f163c342b16b46a80d4b4288c2eb9622e789c3051df2606c317"
+    },
+    {
+      "path": "tests/turnip_diagnostics/fdm-empty-store.patch",
+      "sha256": "bb730db1ec147587f5c453853b6ad79ec114e7cda14f3bb37054700b7b39ee78"
+    },
+    {
+      "path": "tests/turnip_diagnostics/diagnostic-fdm-refine-merge.patch",
+      "sha256": "5448a1752ba0a376bf0779770542ddd8973230895678f6625920088e1c0c1e3c"
+    },
+    {
+      "path": "tests/turnip_diagnostics/diagnostic-fdm-layout-trace.patch",
+      "sha256": "01a8fbbbb6c87d7f00bbf8da85ade847b43843b317e7d0287dd86dc1b2e0c514"
+    },
+    {
+      "path": "tests/turnip_diagnostics/diagnostic-plain-clear-slow-store.patch",
+      "sha256": "d5bde4141437ddbd5f0ec47e4975d72e1f4afc2bf3884a85b9834cef9edc9ccb"
+    },
+    {
+      "path": "tests/turnip_diagnostics/experimental-fs-conditional-prefetch.patch",
+      "sha256": "bc2cf0cecd0c877701dce9742af0c285d88ab7cef5b79db867686b8b3fe968f9"
+    },
+    {
+      "path": "tests/turnip_diagnostics/experimental-fdm-clear-slow-store.patch",
+      "sha256": "ae8b4eaf762ca5777b35780bc9b1b75e395be252ecbb750d7b6e1101faec8f4a"
+    },
+    {
+      "path": "tests/turnip_diagnostics/experimental-shader-state-reuse.patch",
+      "sha256": "45989442a5e25fc05845a8436f6889c0f6b46640ca2ecf92b6f1e53ce458c854"
+    },
+    {
+      "path": "tests/turnip_diagnostics/fix-fdm-clear-conditional-scope.patch",
+      "sha256": "cc623dee7ae88c18e15d52e99139ea0634e1a6a87efc6fff86ac1f140412a599"
+    },
+    {
+      "path": "tests/turnip_diagnostics/fix-fdm-clear-layer-offset.patch",
+      "sha256": "abbdc71b971f791a9b1e87fb23c436a384e1217cb1516bd22ac181e380366ca2"
+    },
+    {
+      "path": "tests/turnip_diagnostics/fix-fdm-clear-bin-clip.patch",
+      "sha256": "5668344027f646dd7a1aad5617fe13683e0f44f25b81749dcd1767f26aa196aa"
+    },
+    {
+      "path": "tests/turnip_diagnostics/fix-suballoc-map-failure.patch",
+      "sha256": "fe41de8e9336c9e55cb95b74d9be8d0573b36ca529be3d0b7f5d2effb94f1574"
+    },
+    {
+      "path": "tests/turnip_diagnostics/experimental-binning-binary-reuse.patch",
+      "sha256": "2f85f7fd9872a29e395828b862799c93d4b66e0423ed74e1d5aa704505c69759"
+    },
+    {
+      "path": "tests/turnip_diagnostics/experimental-binning-upload-reuse.patch",
+      "sha256": "833f8eae668261becc3a83a11374db5323a2c746bc54224f524d854c7ed338de"
+    },
+    {
+      "path": "tests/turnip_diagnostics/fix-shader-upload-cleanup.patch",
+      "sha256": "d286d503c54fa7750e24dd5a953bce0df7f08c6d33ac35f85eff66fc9b4c765c"
+    },
+    {
+      "path": "tests/turnip_diagnostics/fix-pvtmem-failure-recovery.patch",
+      "sha256": "9cf44c514ac7d8eb34629f63fb04a34a461902585a38a214ab405fbc5fe7acdc"
+    },
+    {
+      "path": "tests/turnip_diagnostics/fix-kgsl-error-cleanup.patch",
+      "sha256": "8cef291bac66a9e3fc1c3ba6a2e2faeef6f9c1a5569441a4f663f1c73744f943"
+    },
+    {
+      "path": "tests/turnip_diagnostics/fix-kgsl-vma-lifetime.patch",
+      "sha256": "08f9c9b5b5a07f317368afc6ffaa8d5e8104b0cef26c62beede1277ded0f9e43"
+    },
+    {
+      "path": "tests/turnip_diagnostics/fix-cs-writable-reset.patch",
+      "sha256": "458cf11b9a6eb29f2eaf624f75d082624d3e5df6e816a0ce4fa8adf65bb909ab"
+    },
+    {
+      "path": "tests/turnip_diagnostics/fix-vis-stream-fence-offset.patch",
+      "sha256": "81bfba867c962c7f58f6ffa403f9b4eae04716f5f51cc4efc6b3f2b6eff60cf4"
+    },
+    {
+      "path": "tests/turnip_diagnostics/fix-submit-error-recovery.patch",
+      "sha256": "dc2a73040beabd50aaada46b7da4550c8481d4713d87237b3268a7eedadf17e6"
+    },
+    {
+      "path": "tests/turnip_diagnostics/fix-vsc-growth-failure.patch",
+      "sha256": "761ccb03830a918065a53455aaa388511bad0aaf762f28f9440788be25c82157"
+    },
+    {
+      "path": "tests/turnip_diagnostics/fix-dynamic-submit-list.patch",
+      "sha256": "43433973957fc5e8616f9e005fcef8c907ed232411dad917f53e6e06ab3ec042"
+    },
+    {
+      "path": "tests/turnip_upstream/01-viewport-scissor.patch",
+      "sha256": "20701eb43982fe5a2cf9ab0f1198fe929c30a3e5f0f15c0d313a81b48a7c718e"
+    },
+    {
+      "path": "tests/turnip_upstream/02-gmem-fences.patch",
+      "sha256": "eb31282682b84bfb743e9edcce179c5ac538da7b05c06eebc121c81431333fc8"
+    },
+    {
+      "path": "tests/turnip_upstream/03-descriptors-budget.patch",
+      "sha256": "c0698ab78f5bdc2009c22fdf641d1930c773a07432c275fbf426aed6fbbb318b"
+    },
+    {
+      "path": "tests/turnip_upstream/04-ir3-nir.patch",
+      "sha256": "d60ff0e2ab715fedb70182c3758f1f649da117f0b429ec8f4fa00bebffa2a29d"
+    },
+    {
+      "path": "tests/turnip_vrs/experimental-fdm-vrs.patch",
+      "sha256": "9c9919b4df2aaabf40d1c76c3b275bc44cd2ab66375bce7326d7f60df529b36e"
+    },
+    {
+      "path": "tests/turnip_compile/experimental-range-fastpath.patch",
+      "sha256": "23baccfbaa52982a7a11f09032d700f4e06dc3bc95cc85570fd1bf009cdda68e"
+    },
+    {
+      "path": "tests/turnip_compile/experimental-ssa-pool-all.patch",
+      "sha256": "0e1f9f3400eb9fb0f6d95fdfeff003adf241d54f84e2d63d95a2d86c0f7cb4b8"
+    },
+    {
+      "path": "tests/turnip_compile/experimental-deferred-constlen.patch",
+      "sha256": "b80be3da2ec5370b183f829512475dab8b3331e9bea63d95dece8593858037b7"
+    },
+    {
+      "path": "dependencies/native-build/quest3-turnip/optimization-mk2-compiler-combined/compiler-profile.patch",
+      "sha256": "e0b876a88de6d6c68c2f598707c57c627bcbc30b04c9a341a309a0479ed7e362",
+      "originalPath": "/mnt/e/Codex/AlyxJailbrake/staff/build/compile-latency-02/driver-combined-r1/compiler-profile.patch"
+    }
+  ],
+  "defaultMode": "off",
+  "modes": [
+    "off",
+    "control",
+    "union"
+  ],
+  "restored": true,
+  "gpuValidated": false,
+  "compilerExperiments": {
+    "coldCompile": false,
+    "allocations": false,
+    "optimizationO3": false,
+    "profileGenerate": false,
+    "rangeFastpath": true,
+    "ssaPoolAll": true,
+    "deferredConstlen": true,
+    "thinLTO": true,
+    "cpuTarget": "cortex-a78c",
+    "profileUse": {
+      "path": "dependencies/native-build/quest3-turnip/optimization-mk2-compiler-combined/compiler.profdata",
+      "sha256": "c222722529f8ea1d98b9a1e89a4c91ff96b3d7cd8c8bfafc6836c3f10bdafd2c",
+      "originalPath": "/mnt/e/Codex/AlyxJailbrake/staff/build/compile-latency-01/compiler.profdata"
+    }
+  },
+  "inputs": [
+    {
+      "path": "dependencies/native-build/quest3-turnip/optimization-mk2-compiler-combined/build_fdm_vrs.py",
+      "sha256": "9190bb1e28a3e9f59586bacde3731df0ae5287cefe7e36c05147ce857280b60e"
+    },
+    {
+      "path": "tests/turnip_vrs/tu_alyx_fdm_vrs.h",
+      "sha256": "741357eb9d9db73ae958d5151161be4a0774802fc784a103fd3835db7e91fb6d"
+    },
+    {
+      "path": "tests/turnip_vrs/tu_alyx_fdm_vrs.inc",
+      "sha256": "da5c92e46769156594bb0e21ca4a4950e0c9b146c6caaaf1de4a0224c39d7d46"
+    },
+    {
+      "path": "tests/turnip_vrs/policy_test.cc",
+      "sha256": "5bfa07c7006315e453e91c6e6d2545d39df0ad47105dc6ffa2f9c2df31acdd29"
+    },
+    {
+      "path": "dependencies/native-build/quest3-turnip/optimization-mk2-compiler-combined/compiler_profile_patch.py",
+      "sha256": "12513bf12eab66829e27b40a2454f1f53600c8428aa169f5160c3bbfbe188a9d"
+    },
+    {
+      "path": "dependencies/native-build/quest3-turnip/optimization-mk2-compiler-combined/compiler.profdata",
+      "sha256": "c222722529f8ea1d98b9a1e89a4c91ff96b3d7cd8c8bfafc6836c3f10bdafd2c"
+    },
+    {
+      "path": "dependencies/native-build/quest3-turnip/optimization-mk2-compiler-combined/original-build.json",
+      "sha256": "820ae9243cc53c39acb1ecd0cfec7d59e0e88dc41cd3c2ca436ccb324b40dfd1"
+    }
+  ],
+  "policyTests": {
+    "passed": true,
+    "sanitizers": [
+      "address",
+      "undefined"
+    ],
+    "logSha256": "074ab50b9e773cbd558f3767132de10d13b5cec2abfa64dea478c1cc798f9748"
+  },
+  "originalFiles": {
+    "src/freedreno/vulkan/tu_clear_blit.cc": "aaab9b0d10c7f8649aea70a7ce9c23ca585f7b75851df0b883a91673b9da377f",
+    "src/freedreno/common/freedreno_dev_info.h": "bd0e8681a5058dbc76d5a3b26ea4e9149875dff2d838edd750f9092d1e0f7a43",
+    "src/freedreno/vulkan/tu_pass.h": "f96c50954e9244289fa00d8c989acebca68882fcfd2693a6553f48b9b13c931b",
+    "src/freedreno/vulkan/tu_suballoc.cc": "a12affe866b846647c87dbfc939b33de9dda207916149d9273d77ce1a5d8c170",
+    "src/compiler/spirv/meson.build": "4a751262e56fe46f608cda9b2c6349da1df0dadee9c04ad7357c51a5e92ea390",
+    "src/freedreno/vulkan/tu_query_pool.cc": "78e9eb0b089f097d4de4efd564469500e8c32ec80a5324dbe910e9f6ae7fde59",
+    "src/compiler/nir/meson.build": "7bb1a318ed8d813dd16dee9b14d20ca32bd2d95682fe1ee2bf4350dbeb3cc422",
+    "src/freedreno/vulkan/tu_descriptor_set.cc": "aa626163947518555affc2e94e3541512f85e80e81dfa47358fe19c8576ecf5c",
+    "src/freedreno/vulkan/tu_clear_blit.h": "efa71a356cf86937e2c84efe178bcffc4c6074e4a7b27ce50b0b55f2ca627bb5",
+    "src/freedreno/vulkan/tu_pipeline.cc": "a6a37e7b1b977e40225e1ac171664e62e64bfe7efbeb2139517cedfe0d8efe40",
+    "src/freedreno/vulkan/tu_descriptor_set.h": "686680ad858839df82b5fd55b41edaf901f7b5c6d4917e7b8b103a53a78ea674",
+    "src/freedreno/vulkan/tu_device.h": "bcfc1ab5c0ce12ad9a2f551abc1ee13a8e2cea11407858f46f5ab4f7bde93982",
+    "src/freedreno/fdl/freedreno_lrz_layout.h": "6df11f5c5b61174c94b7843896a999b6e6636bb3e5e2936e4e65eed31d11e943",
+    "src/freedreno/vulkan/tu_knl_kgsl.cc": "490022fe225b289ee317eabae317af564cd97c872fc758bae8f11f4d7e477a0f",
+    "src/freedreno/vulkan/tu_tile_config.h": "e3d3f8f3bdb337ecde8269a44e75035e0a494ea707f9a923691d25254e8fda32",
+    "src/freedreno/common/freedreno_devices.py": "477abad072ed23d7f52766119e5b3cb1eebdd298b87d96dd2cd17c984dcf5a40",
+    "src/util/meson.build": "a2708cc654ab709ee8729920e06b3f859591531d6668bfdadea63930a151d70f",
+    "src/freedreno/ir3/ir3_postsched.c": "334055332eb3e3fea1dc857fb1c307633ba4406e9f40757c6225169666018e73",
+    "src/freedreno/vulkan/tu_alyx_fdm_vrs.h": null,
+    "src/freedreno/vulkan/tu_cmd_buffer.cc": "6d17ec64fa4d1b910e6ab49ce196c6e152bf18136e00e05a197f878a4f0c80cf",
+    "src/compiler/nir/nir_range_analysis.c": "69aa1a8f5aba1315a9ec7ec133793e52d26dfa4e7bbb5a6c8ade287a2af37636",
+    "src/freedreno/vulkan/tu_autotune.h": "79dd7f07666bc26cab0cd6027010f69f06f03d33adeb72ffdefd2bc547abbfdc",
+    "src/freedreno/ir3/ir3_nir.c": "44b48a12a19a4c099fb3e5da821b3c66af2c3fef392e82d16963d4053a86f3cd",
+    "src/freedreno/vulkan/tu_dynamic_rendering.cc": "7ea7145083ca1b5cc63a621507df8fc5ea5d44dd438fb36599a9b5ee64dba2e7",
+    "src/freedreno/vulkan/tu_queue.cc": "a2b818fb1d4d187a047d1ffdc9510dfecfc18c391b9a931d26f36b1f03c7beea",
+    "src/freedreno/vulkan/tu_shader.cc": "2597bd131a66ee446432c168794dd8365ac9f6518b8d8ec47e8a2bb8abcaf66b",
+    "src/freedreno/ir3/ir3_alyx_use_pool.h": null,
+    "src/freedreno/vulkan/tu_pass.cc": "54211c005af67bc050445e39f6d9919c04c2960b2ea8c1a065e11d8a743ccb03",
+    "src/freedreno/vulkan/tu_common.h": "c5fb920072eb83e7b307a150d0bdd1cf00a258b060997beb10ee2ab00bdba376",
+    "src/freedreno/vulkan/tu_tile_config.cc": "e6e763f0b705f679e7b1be77acbbb0e340e5396ba9133f497fe565cc92010dd1",
+    "src/freedreno/ir3/ir3.h": "347b49b09c7427a633573d9efd1b446d1b74db456cdc8f1581228899416005a5",
+    "src/freedreno/vulkan/tu_cmd_buffer.h": "c71f5bef308f42418f7c32eccf0ef31520b1cba30635db384d1f5e1419e41349",
+    "src/freedreno/ir3/ir3_nir_opt_preamble.c": "c276a4546d95a0225ab3c569f0deb39304b53c9d1170bf230f045aa1233d831e",
+    "src/freedreno/ir3/ir3_rpt.c": "63d40ef5552fadcd80e618169af879cc841fde90db87425171bcf0d80b207902",
+    "src/freedreno/vulkan/tu_formats.cc": "c47d23682033c75eba7da762798d61eeff8d92c21ffeff6124f545ba72c47b55",
+    "src/freedreno/vulkan/tu_alyx_fdm_vrs.inc": null,
+    "src/freedreno/ir3/ir3.c": "09d6bde09461a0efa2be74ca41158692d568b661d4db753e65549cd6d392bd82",
+    "src/freedreno/vulkan/tu_autotune.cc": "a4a222bc8573ffe597aac2b11aef8744d68433666ed9131b6d3301efd434c786",
+    "src/freedreno/common/freedreno_gpu_event.h": "eb1b91975fcb1fbd5678ff255fd5858a326ed6e79df2704d181a101e92c03648",
+    "src/freedreno/ir3/meson.build": "403b0f53ad6977329299c8a1502e544ac1ecf965ffca1e04446335c7157bd131",
+    "src/freedreno/ir3/ir3_shader.c": "5dcdd2ce4116bf251bc523ca4850ccb5a3a7539bf82cc17124d1f9d7be7185ac",
+    "src/freedreno/ir3/ir3_shader.h": "c6b2b543f8c87d8c4e4814a7ae2cfd35525960d8d0223a0d1662e258edf10aca",
+    "src/freedreno/vulkan/tu_image.h": "5b53a4fe88a5cdc0d6d01920a828a94ce26d51b347939ea63d92e70e681de1c6",
+    "src/freedreno/vulkan/tu_cs.cc": "3b64b97005d4113c6374c3258bdbf25d07b496d71fe1c260b50d64a47f8684d5",
+    "src/freedreno/ir3/ir3_cp.c": "87cd0738ffe98c66bcf14aebac82f9aa0d6acf14318ed55909a4bfa5eb868ccf",
+    "src/freedreno/vulkan/tu_shader.h": "5b7b49ac85beeafab34849bfc8f4a749cc0c5532ae1273558741cf2220dac23e",
+    "src/freedreno/vulkan/tu_lrz.h": "974713b972f83f641b0f66c7416e20e867bfb86b10eb65279da25e79b2e57d6c",
+    "src/freedreno/vulkan/meson.build": "ced86594f7710606aa568e75cc948ec3b7f40623c90be058cb1dfc53becb35f4",
+    "src/freedreno/vulkan/tu_image.cc": "97bac0d6b8ac8ccdb88cbdca98c5ff0e4b07098fb9f2a6e089fe6887f8fa6cc8",
+    "src/freedreno/vulkan/tu_lrz.cc": "cf7d8372f07af2f9cbd0349df1172103d181d60ed9a9d1971afb06bfc724d37a",
+    "src/freedreno/vulkan/tu_device.cc": "a49630838c20682a29cd78e614fbe460f1ad24fb5a52255c9506ec19bcba7925"
+  },
+  "rebuiltReleaseSha256": "abf6363b138f501b1a813ba5c030735282c307e74a59f14658e021ca9482f117",
+  "candidateSha256": "1559bf7493ae397c274c9743befcbcc4bd6cfd6e1232f4f41f0f45e5374c25bb",
+  "restoredSha256": "7171e6f718f582f08bb20e57a10c9e066d434241e984085cb3695187f51f90da"
+}

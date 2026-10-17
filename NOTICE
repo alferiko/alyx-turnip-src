@@ -1,0 +1,35 @@
+Alyx Turnip — downstream Mesa Turnip driver
+
+Mesa / Freedreno / Turnip
+  https://gitlab.freedesktop.org/mesa/mesa
+  Source revision: 48297c834466
+  Original copyright and license notices remain in the reconstructed sources.
+  All license texts from the pinned Mesa licenses/ directory are preserved in
+  licenses/mesa/. Their presence does not imply that every Mesa component is
+  linked into this Turnip binary; per-file licenses govern the included code.
+
+Quest compatibility patch source
+  https://github.com/Jbbrack03/Quest-3-Turnip-Driver
+  Revision: 83cd874f3449d091fca51d25389f88f520a7f2f3
+  Original project by Jbbrack03; Mesa-derived patches described as MIT upstream.
+  The baseline patch also includes later Alyx source changes. See provenance.
+
+Mesa backports
+  Original upstream revisions and authorship in docs/UPSTREAM_BACKPORTS.md
+  and the preserved patch headers.
+
+Build fallback dependencies
+  Expat 2.5.0, libarchive 3.7.2 and libxml2 2.11.6.
+  Their upstream and Meson wrapper license notices are retained in
+  licenses/dependencies/. Exact download identities are pinned by the Mesa
+  source archive's subprojects/*.wrap files.
+
+Alyx changes
+  Developed for the Alyx Jailbreak project; source and binary fingerprints
+  appear in provenance/driver-build.json and provenance/release.json.
+
+Artwork
+  docs/images/logo.png is the logo image supplied by the repository owner,
+  copied unchanged. It is outside the software license grant.
+
+This project is not an official Mesa, Meta, PICO, Qualcomm or Valve product.

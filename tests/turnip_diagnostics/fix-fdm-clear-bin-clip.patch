@@ -1,0 +1,36 @@
+--- a/src/freedreno/vulkan/tu_clear_blit.cc
++++ b/src/freedreno/vulkan/tu_clear_blit.cc
+@@ -4189,12 +4189,27 @@
+       frag_area = (VkExtent2D) { 1, 1 };
+    }
+ 
+-   unsigned x1 = state->rect.offset.x / frag_area.width + offset.x;
+-   unsigned x2 = DIV_ROUND_UP(state->rect.offset.x + state->rect.extent.width,
+-                              frag_area.width) + offset.x;
+-   unsigned y1 = state->rect.offset.y / frag_area.height + offset.y;
+-   unsigned y2 = DIV_ROUND_UP(state->rect.offset.y + state->rect.extent.height,
+-                              frag_area.height) + offset.y;
++   int32_t left = state->rect.offset.x;
++   int32_t top = state->rect.offset.y;
++   int32_t right = left + state->rect.extent.width;
++   int32_t bottom = top + state->rect.extent.height;
++   /* The layered clear uses viewport 0, whose scissor cannot clip each
++    * view independently. Clip the primitive in framebuffer space before
++    * applying the view's FDM transform. Empty/invisible bins stay empty.
++    */
++   if (!binning && !state->custom_resolve) {
++      left = MAX2(left, bin.offset.x);
++      top = MAX2(top, bin.offset.y);
++      right = MAX2(left, MIN2(right, bin.offset.x + (int32_t)bin.extent.width));
++      bottom = MAX2(top, MIN2(bottom, bin.offset.y + (int32_t)bin.extent.height));
++   }
++   /* A different viewport's hardware offset can make these negative. */
++   int32_t x1 = left / (int32_t)frag_area.width + offset.x;
++   int32_t x2 = DIV_ROUND_UP(right, (int32_t)frag_area.width) + offset.x;
++   int32_t y1 = top / (int32_t)frag_area.height + offset.y;
++   int32_t y2 = DIV_ROUND_UP(bottom, (int32_t)frag_area.height) + offset.y;
++   if (right <= left || bottom <= top)
++      x1 = x2 = y1 = y2 = 0;
+ 
+    const float coords[] = {
+       x1, y1,

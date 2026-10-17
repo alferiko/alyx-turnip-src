@@ -1,0 +1,5 @@
+VRS exact-content cache: invalidation, padding, relocation, LRU and 2MiB cap passed
+VRS pixel-oracle cells: 19384
+VRS policy: all checks passed
+PASS: MSAA rate limits, sharp center, final-map ownership, sample-count isolation and invalidation
+PASS reconstructed variant policy: msaa-vrs-cache

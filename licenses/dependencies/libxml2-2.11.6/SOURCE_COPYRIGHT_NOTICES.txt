@@ -1,0 +1,3463 @@
+FILE: HTMLparser.c
+/*
+ * HTMLparser.c : an HTML 4.0 non-verifying parser
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ */
+
+FILE: HTMLtree.c
+/*
+ * HTMLtree.c : implementation of access function for an HTML tree.
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ */
+
+FILE: Makefile.in
+/*[^/]*$$,,'; \
+  while test -n "$$dir1"; do \
+    first=`echo "$$dir1" | sed -e "$$sed_first"`; \
+    if test "$$first" != "."; then \
+      if test "$$first" = ".."; then \
+        dir2=`echo "$$dir0" | sed -e "$$sed_last"`/"$$dir2"; \
+        dir0=`echo "$$dir0" | sed -e "$$sed_butlast"`; \
+      else \
+        first2=`echo "$$dir2" | sed -e "$$sed_first"`; \
+        if test "$$first2" = "$$first"; then \
+          dir2=`echo "$$dir2" | sed -e "$$sed_rest"`; \
+        else \
+          dir2="../$$dir2"; \
+        fi; \
+        dir0="$$dir0"/"$$first"; \
+      fi; \
+    fi; \
+    dir1=`echo "$$dir1" | sed -e "$$sed_rest"`; \
+  done; \
+  reldir="$$dir2"
+GZIP_ENV = --best
+DIST_ARCHIVES = $(distdir).tar.xz
+DIST_TARGETS = dist-xz
+# Exists only to be overridden by the user if desired.
+AM_DISTCHECK_DVI_TARGET = dvi
+distuninstallcheck_listfiles = find . -type f -print
+am__distuninstallcheck_listfiles = $(distuninstallcheck_listfiles) \
+  | sed 's|^\./|$(prefix)/|' | grep -v '$(infodir)/dir$$'
+distcleancheck_listfiles = find . -type f -print
+ACLOCAL = @ACLOCAL@
+AMTAR = @AMTAR@
+AM_CFLAGS = @AM_CFLAGS@
+AM_DEFAULT_VERBOSITY = @AM_DEFAULT_VERBOSITY@
+AM_LDFLAGS = @AM_LDFLAGS@
+AR = @AR@
+AUTOCONF = @AUTOCONF@
+AUTOHEADER = @AUTOHEADER@
+AUTOMAKE = @AUTOMAKE@
+AWK = @AWK@
+BASE_THREAD_LIBS = @BASE_THREAD_LIBS@
+CC = @CC@
+CCDEPMODE = @CCDEPMODE@
+CFLAGS = @CFLAGS@
+CPPFLAGS = @CPPFLAGS@
+CSCOPE = @CSCOPE@
+CTAGS = @CTAGS@
+CYGPATH_W = @CYGPATH_W@
+DEFS = @DEFS@
+DEPDIR = @DEPDIR@
+DLLTOOL = @DLLTOOL@
+DSYMUTIL = @DSYMUTIL@
+DUMPBIN = @DUMPBIN@
+ECHO_C = @ECHO_C@
+ECHO_N = @ECHO_N@
+ECHO_T = @ECHO_T@
+EGREP = @EGREP@
+ETAGS = @ETAGS@
+EXEEXT = @EXEEXT@
+FGREP = @FGREP@
+GREP = @GREP@
+ICONV_CFLAGS = @ICONV_CFLAGS@
+ICU_CFLAGS = @ICU_CFLAGS@
+ICU_DEFS = @ICU_DEFS@
+ICU_LIBS = @ICU_LIBS@
+INSTALL = @INSTALL@
+INSTALL_DATA = @INSTALL_DATA@
+INSTALL_PROGRAM = @INSTALL_PROGRAM@
+INSTALL_SCRIPT = @INSTALL_SCRIPT@
+INSTALL_STRIP_PROGRAM = @INSTALL_STRIP_PROGRAM@
+LD = @LD@
+LDFLAGS = @LDFLAGS@
+LIBM = @LIBM@
+LIBOBJS = @LIBOBJS@
+LIBS = @LIBS@
+LIBTOOL = @LIBTOOL@
+LIBXML_MAJOR_VERSION = @LIBXML_MAJOR_VERSION@
+LIBXML_MICRO_VERSION = @LIBXML_MICRO_VERSION@
+LIBXML_MINOR_VERSION = @LIBXML_MINOR_VERSION@
+LIBXML_VERSION = @LIBXML_VERSION@
+LIBXML_VERSION_EXTRA = @LIBXML_VERSION_EXTRA@
+LIBXML_VERSION_INFO = @LIBXML_VERSION_INFO@
+LIBXML_VERSION_NUMBER = @LIBXML_VERSION_NUMBER@
+LIPO = @LIPO@
+LN_S = @LN_S@
+LTLIBOBJS = @LTLIBOBJS@
+LT_SYS_LIBRARY_PATH = @LT_SYS_LIBRARY_PATH@
+LZMA_CFLAGS = @LZMA_CFLAGS@
+LZMA_LIBS = @LZMA_LIBS@
+MAINT = @MAINT@
+MAKEINFO = @MAKEINFO@
+MANIFEST_TOOL = @MANIFEST_TOOL@
+MKDIR_P = @MKDIR_P@
+MODULE_EXTENSION = @MODULE_EXTENSION@
+MODULE_PLATFORM_LIBS = @MODULE_PLATFORM_LIBS@
+NM = @NM@
+NMEDIT = @NMEDIT@
+OBJDUMP = @OBJDUMP@
+OBJEXT = @OBJEXT@
+OTOOL = @OTOOL@
+OTOOL64 = @OTOOL64@
+PACKAGE = @PACKAGE@
+PACKAGE_BUGREPORT = @PACKAGE_BUGREPORT@
+PACKAGE_NAME = @PACKAGE_NAME@
+PACKAGE_STRING = @PACKAGE_STRING@
+PACKAGE_TARNAME = @PACKAGE_TARNAME@
+PACKAGE_URL = @PACKAGE_URL@
+PACKAGE_VERSION = @PACKAGE_VERSION@
+PATH_SEPARATOR = @PATH_SEPARATOR@
+PERL = @PERL@
+PKG_CONFIG = @PKG_CONFIG@
+PKG_CONFIG_LIBDIR = @PKG_CONFIG_LIBDIR@
+PKG_CONFIG_PATH = @PKG_CONFIG_PATH@
+PYTHON = @PYTHON@
+PYTHON_CFLAGS = @PYTHON_CFLAGS@
+PYTHON_EXEC_PREFIX = @PYTHON_EXEC_PREFIX@
+PYTHON_LDFLAGS = @PYTHON_LDFLAGS@
+PYTHON_LIBS = @PYTHON_LIBS@
+PYTHON_PLATFORM = @PYTHON_PLATFORM@
+PYTHON_PREFIX = @PYTHON_PREFIX@
+PYTHON_VERSION = @PYTHON_VERSION@
+RANLIB = @RANLIB@
+RDL_CFLAGS = @RDL_CFLAGS@
+RDL_LIBS = @RDL_LIBS@
+RELDATE = @RELDATE@
+SED = @SED@
+SET_MAKE = @SET_MAKE@
+SHELL = @SHELL@
+STRIP = @STRIP@
+TAR = @TAR@
+THREAD_CFLAGS = @THREAD_CFLAGS@
+THREAD_LIBS = @THREAD_LIBS@
+VERSION = @VERSION@
+VERSION_SCRIPT_FLAGS = @VERSION_SCRIPT_FLAGS@
+WGET = @WGET@
+WITH_C14N = @WITH_C14N@
+WITH_CATALOG = @WITH_CATALOG@
+WITH_DEBUG = @WITH_DEBUG@
+WITH_FTP = @WITH_FTP@
+WITH_HTML = @WITH_HTML@
+WITH_HTTP = @WITH_HTTP@
+WITH_ICONV = @WITH_ICONV@
+WITH_ICU = @WITH_ICU@
+WITH_ISO8859X = @WITH_ISO8859X@
+WITH_LEGACY = @WITH_LEGACY@
+WITH_LZMA = @WITH_LZMA@
+WITH_MEM_DEBUG = @WITH_MEM_DEBUG@
+WITH_MODULES = @WITH_MODULES@
+WITH_OUTPUT = @WITH_OUTPUT@
+WITH_PATTERN = @WITH_PATTERN@
+WITH_PUSH = @WITH_PUSH@
+WITH_READER = @WITH_READER@
+WITH_REGEXPS = @WITH_REGEXPS@
+WITH_SAX1 = @WITH_SAX1@
+WITH_SCHEMAS = @WITH_SCHEMAS@
+WITH_SCHEMATRON = @WITH_SCHEMATRON@
+WITH_THREADS = @WITH_THREADS@
+WITH_THREAD_ALLOC = @WITH_THREAD_ALLOC@
+WITH_TREE = @WITH_TREE@
+WITH_TRIO = @WITH_TRIO@
+WITH_VALID = @WITH_VALID@
+WITH_WRITER = @WITH_WRITER@
+WITH_XINCLUDE = @WITH_XINCLUDE@
+WITH_XPATH = @WITH_XPATH@
+WITH_XPTR = @WITH_XPTR@
+WITH_XPTR_LOCS = @WITH_XPTR_LOCS@
+WITH_ZLIB = @WITH_ZLIB@
+XML_CFLAGS = @XML_CFLAGS@
+XML_INCLUDEDIR = @XML_INCLUDEDIR@
+XML_LIBDIR = @XML_LIBDIR@
+XML_LIBS = @XML_LIBS@
+XML_LIBTOOLLIBS = @XML_LIBTOOLLIBS@
+XML_PRIVATE_CFLAGS = @XML_PRIVATE_CFLAGS@
+XML_PRIVATE_LIBS = @XML_PRIVATE_LIBS@
+XSLTPROC = @XSLTPROC@
+Z_CFLAGS = @Z_CFLAGS@
+Z_LIBS = @Z_LIBS@
+abs_builddir = @abs_builddir@
+abs_srcdir = @abs_srcdir@
+abs_top_builddir = @abs_top_builddir@
+abs_top_srcdir = @abs_top_srcdir@
+ac_ct_AR = @ac_ct_AR@
+ac_ct_CC = @ac_ct_CC@
+ac_ct_DUMPBIN = @ac_ct_DUMPBIN@
+am__include = @am__include@
+am__leading_dot = @am__leading_dot@
+am__quote = @am__quote@
+am__tar = @am__tar@
+am__untar = @am__untar@
+bindir = @bindir@
+build = @build@
+build_alias = @build_alias@
+build_cpu = @build_cpu@
+build_os = @build_os@
+build_vendor = @build_vendor@
+builddir = @builddir@
+datadir = @datadir@
+datarootdir = @datarootdir@
+docdir = @docdir@
+dvidir = @dvidir@
+exec_prefix = @exec_prefix@
+host = @host@
+host_alias = @host_alias@
+host_cpu = @host_cpu@
+host_os = @host_os@
+host_vendor = @host_vendor@
+htmldir = @htmldir@
+includedir = @includedir@
+infodir = @infodir@
+install_sh = @install_sh@
+libdir = @libdir@
+libexecdir = @libexecdir@
+localedir = @localedir@
+localstatedir = @localstatedir@
+mandir = @mandir@
+mkdir_p = @mkdir_p@
+oldincludedir = @oldincludedir@
+pdfdir = @pdfdir@
+pkgpyexecdir = @pkgpyexecdir@
+pkgpythondir = @pkgpythondir@
+prefix = @prefix@
+program_transform_name = @program_transform_name@
+psdir = @psdir@
+pyexecdir = @pyexecdir@
+pythondir = @pythondir@
+runstatedir = @runstatedir@
+sbindir = @sbindir@
+sharedstatedir = @sharedstatedir@
+srcdir = @srcdir@
+sysconfdir = @sysconfdir@
+target_alias = @target_alias@
+top_build_prefix = @top_build_prefix@
+top_builddir = @top_builddir@
+top_srcdir = @top_srcdir@
+ACLOCAL_AMFLAGS = -I m4
+SUBDIRS = include . doc example xstc $(am__append_1) $(am__append_2)
+DIST_SUBDIRS = include . doc example fuzz python xstc
+AM_CPPFLAGS = -I$(top_builddir)/include -I$(srcdir)/include -DSYSCONFDIR='"$(sysconfdir)"'
+bin_SCRIPTS = xml2-config
+lib_LTLIBRARIES = libxml2.la
+libxml2_la_CFLAGS = $(AM_CFLAGS) $(XML_PRIVATE_CFLAGS)
+libxml2_la_LIBADD = $(XML_PRIVATE_LIBS)
+libxml2_la_LDFLAGS = $(AM_LDFLAGS) -no-undefined -version-info \
+	$(LIBXML_VERSION_INFO) $(MODULE_PLATFORM_LIBS) $(am__append_3)
+libxml2_la_SOURCES = buf.c chvalid.c dict.c entities.c encoding.c \
+	error.c globals.c hash.c list.c parser.c parserInternals.c \
+	SAX2.c threads.c tree.c uri.c valid.c xmlIO.c xmlmemory.c \
+	xmlstring.c $(am__append_4) $(am__append_5) $(am__append_6) \
+	$(am__append_7) $(am__append_8) $(am__append_9) \
+	$(am__append_10) $(am__append_11) $(am__append_12) \
+	$(am__append_13) $(am__append_14) $(am__append_15) \
+	$(am__append_16) $(am__append_17) $(am__append_18) \
+	$(am__append_19) $(am__append_20) $(am__append_21) \
+	$(am__append_22) $(am__append_23) $(am__append_24) \
+	$(am__append_25)
+DEPS = $(top_builddir)/libxml2.la
+LDADDS = $(top_builddir)/libxml2.la
+m4datadir = $(datadir)/aclocal
+dist_m4data_DATA = libxml.m4
+runtest_SOURCES = runtest.c
+runtest_CFLAGS = $(AM_CFLAGS) $(THREAD_CFLAGS)
+runtest_DEPENDENCIES = $(DEPS)
+runtest_LDADD = $(BASE_THREAD_LIBS) $(THREAD_LIBS) $(LDADDS)
+testrecurse_SOURCES = testrecurse.c
+testrecurse_DEPENDENCIES = $(DEPS)
+testrecurse_LDADD = $(LDADDS)
+testlimits_SOURCES = testlimits.c
+testlimits_DEPENDENCIES = $(DEPS)
+testlimits_LDADD = $(LDADDS)
+testchar_SOURCES = testchar.c
+testchar_DEPENDENCIES = $(DEPS)
+testchar_LDADD = $(LDADDS)
+testdict_SOURCES = testdict.c
+testdict_DEPENDENCIES = $(DEPS)
+testdict_LDADD = $(LDADDS)
+runsuite_SOURCES = runsuite.c
+runsuite_DEPENDENCIES = $(DEPS)
+runsuite_LDADD = $(LDADDS)
+xmllint_SOURCES = xmllint.c
+xmllint_CFLAGS = $(AM_CFLAGS) $(RDL_CFLAGS) $(ICONV_CFLAGS)
+xmllint_DEPENDENCIES = $(DEPS)
+xmllint_LDADD = $(RDL_LIBS) $(LDADDS)
+xmlcatalog_SOURCES = xmlcatalog.c
+xmlcatalog_CFLAGS = $(AM_CFLAGS) $(RDL_CFLAGS) $(ICONV_CFLAGS)
+xmlcatalog_DEPENDENCIES = $(DEPS)
+xmlcatalog_LDADD = $(RDL_LIBS) $(LDADDS)
+testThreads_SOURCES = testThreads.c
+testThreads_CFLAGS = $(AM_CFLAGS) $(THREAD_CFLAGS)
+testThreads_DEPENDENCIES = $(DEPS)
+testThreads_LDADD = $(BASE_THREAD_LIBS) $(THREAD_LIBS) $(LDADDS)
+testModule_SOURCES = testModule.c
+testModule_DEPENDENCIES = $(DEPS)
+testModule_LDADD = $(LDADDS)
+noinst_LTLIBRARIES = testdso.la
+testdso_la_SOURCES = testdso.c
+testdso_la_LDFLAGS = $(AM_LDFLAGS) \
+		     -module -no-undefined -avoid-version -rpath $(libdir)
+
+testapi_SOURCES = testapi.c
+testapi_DEPENDENCIES = $(DEPS)
+testapi_LDADD = $(LDADDS)
+runxmlconf_SOURCES = runxmlconf.c
+runxmlconf_DEPENDENCIES = $(DEPS)
+runxmlconf_LDADD = $(LDADDS)
+
+# Old test suite. This should be ported to C.
+OLD_TESTS = Timingtests $(am__append_26) $(am__append_27) \
+	$(am__append_28) $(am__append_29) $(am__append_30)
+CLEANFILES = runsuite.log runxmlconf.log test.out *.gcda *.gcno *.res
+DISTCLEANFILES = COPYING missing.lst
+EXTRA_DIST = Copyright check-xml-test-suite.py gentest.py \
+	     check-relaxng-test-suite.py check-relaxng-test-suite2.py \
+	     check-xsddata-test-suite.py check-xinclude-test-suite.py \
+             example/Makefile.am example/gjobread.c example/gjobs.xml \
+	     libxml2-config.cmake.in autogen.sh \
+	     trionan.c trionan.h triostr.c triostr.h trio.c trio.h \
+	     triop.h triodef.h libxml.h \
+	     genUnicode.py \
+	     dbgen.pl dbgenattr.pl \
+	     libxml2.syms timsort.h \
+	     README.zOS README.md \
+	     CMakeLists.txt config.h.cmake.in libxml2-config.cmake.cmake.in
+
+pkgconfigdir = $(libdir)/pkgconfig
+pkgconfig_DATA = libxml-2.0.pc
+cmakedir = $(libdir)/cmake/libxml2
+cmake_DATA = libxml2-config.cmake
+
+#
+# Install the tests program sources as examples 
+#
+examplesdir = $(docdir)/examples
+examples_DATA = xmllint.c
+
+#
+# Coverage support, largely borrowed from libvirt
+# Both binaries comes from the lcov package in Fedora
+#
+LCOV = /usr/bin/lcov
+GENHTML = /usr/bin/genhtml
+all: config.h
+	$(MAKE) $(AM_MAKEFLAGS) all-recursive
+
+.SUFFIXES:
+.SUFFIXES: .c .lo .o .obj
+am--refresh: Makefile
+	@:
+$(srcdir)/Makefile.in: @MAINTAINER_MODE_TRUE@ $(srcdir)/Makefile.am  $(am__configure_deps)
+	@for dep in $?; do \
+	  case '$(am__configure_deps)' in \
+	    *$$dep*) \
+	      echo ' cd $(srcdir) && $(AUTOMAKE) --foreign'; \
+	      $(am__cd) $(srcdir) && $(AUTOMAKE) --foreign \
+		&& exit 0; \
+	      exit 1;; \
+	  esac; \
+	done; \
+	echo ' cd $(top_srcdir) && $(AUTOMAKE) --foreign Makefile'; \
+	$(am__cd) $(top_srcdir) && \
+	  $(AUTOMAKE) --foreign Makefile
+Makefile: $(srcdir)/Makefile.in $(top_builddir)/config.status
+	@case '$?' in \
+	  *config.status*) \
+	    echo ' $(SHELL) ./config.status'; \
+	    $(SHELL) ./config.status;; \
+	  *) \
+	    echo ' cd $(top_builddir) && $(SHELL) ./config.status $@ $(am__maybe_remake_depfiles)'; \
+	    cd $(top_builddir) && $(SHELL) ./config.status $@ $(am__maybe_remake_depfiles);; \
+	esac;
+
+$(top_builddir)/config.status: $(top_srcdir)/configure $(CONFIG_STATUS_DEPENDENCIES)
+	$(SHELL) ./config.status --recheck
+
+$(top_srcdir)/configure: @MAINTAINER_MODE_TRUE@ $(am__configure_deps)
+	$(am__cd) $(srcdir) && $(AUTOCONF)
+$(ACLOCAL_M4): @MAINTAINER_MODE_TRUE@ $(am__aclocal_m4_deps)
+	$(am__cd) $(srcdir) && $(ACLOCAL) $(ACLOCAL_AMFLAGS)
+$(am__aclocal_m4_deps):
+
+config.h: stamp-h1
+	@test -f $@ || rm -f stamp-h1
+	@test -f $@ || $(MAKE) $(AM_MAKEFLAGS) stamp-h1
+
+stamp-h1: $(srcdir)/config.h.in $(top_builddir)/config.status
+	@rm -f stamp-h1
+	cd $(top_builddir) && $(SHELL) ./config.status config.h
+$(srcdir)/config.h.in: @MAINTAINER_MODE_TRUE@ $(am__configure_deps) 
+	($(am__cd) $(top_srcdir) && $(AUTOHEADER))
+	rm -f stamp-h1
+	touch $@
+
+distclean-hdr:
+	-rm -f config.h stamp-h1
+libxml-2.0.pc: $(top_builddir)/config.status $(srcdir)/libxml-2.0.pc.in
+	cd $(top_builddir) && $(SHELL) ./config.status $@
+libxml-2.0-uninstalled.pc: $(top_builddir)/config.status $(srcdir)/libxml-2.0-uninstalled.pc.in
+	cd $(top_builddir) && $(SHELL) ./config.status $@
+libxml2-config.cmake: $(top_builddir)/config.status $(srcdir)/libxml2-config.cmake.in
+	cd $(top_builddir) && $(SHELL) ./config.status $@
+xml2-config: $(top_builddir)/config.status $(srcdir)/xml2-config.in
+	cd $(top_builddir) && $(SHELL) ./config.status $@
+install-binPROGRAMS: $(bin_PROGRAMS)
+	@$(NORMAL_INSTALL)
+	@list='$(bin_PROGRAMS)'; test -n "$(bindir)" || list=; \
+	if test -n "$$list"; then \
+	  echo " $(MKDIR_P) '$(DESTDIR)$(bindir)'"; \
+	  $(MKDIR_P) "$(DESTDIR)$(bindir)" || exit 1; \
+	fi; \
+	for p in $$list; do echo "$$p $$p"; done | \
+	sed 's/$(EXEEXT)$$//' | \
+	while read p p1; do if test -f $$p \
+	 || test -f $$p1 \
+	  ; then echo "$$p"; echo "$$p"; else :; fi; \
+	done | \
+	sed -e 'p;s,.*/
+
+FILE: SAX.c
+/*
+ * SAX.c : Old SAX v1 handlers to build a tree.
+ *         Deprecated except for compatibility
+ *
+ * See Copyright for the status of this software.
+ *
+ * Daniel Veillard <daniel@veillard.com>
+ */
+
+FILE: SAX2.c
+/*
+ * SAX2.c : Default SAX2 handler to build a tree.
+ *
+ * See Copyright for the status of this software.
+ *
+ * Daniel Veillard <daniel@veillard.com>
+ */
+
+FILE: aclocal.m4
+/*\(.*\)"`
+# and then we would define $MISSING as
+#   MISSING="\${SHELL} $am_aux_dir/missing"
+# This will work as long as MISSING is not called from configure, because
+# unfortunately $(top_srcdir) has no meaning in configure.
+# However there are other variables, like CC, which are often used in
+# configure, and could therefore not use this "fixed" $ac_aux_dir.
+#
+# Another solution, used here, is to always expand $ac_aux_dir to an
+# absolute PATH.  The drawback is that using absolute paths prevent a
+# configured tree to be moved without reconfiguration.
+
+AC_DEFUN([AM_AUX_DIR_EXPAND],
+[AC_REQUIRE([AC_CONFIG_AUX_DIR_DEFAULT])dnl
+# Expand $ac_aux_dir to an absolute path.
+am_aux_dir=`cd "$ac_aux_dir" && pwd`
+])
+
+# AM_CONDITIONAL                                            -*- Autoconf -*-
+
+# Copyright (C) 1997-2021 Free Software Foundation, Inc.
+#
+# This file is free software; the Free Software Foundation
+# gives unlimited permission to copy and/or distribute it,
+# with or without modifications, as long as this notice is preserved.
+
+# AM_CONDITIONAL(NAME, SHELL-CONDITION)
+# -------------------------------------
+# Define a conditional.
+AC_DEFUN([AM_CONDITIONAL],
+[AC_PREREQ([2.52])dnl
+ m4_if([$1], [TRUE],  [AC_FATAL([$0: invalid condition: $1])],
+       [$1], [FALSE], [AC_FATAL([$0: invalid condition: $1])])dnl
+AC_SUBST([$1_TRUE])dnl
+AC_SUBST([$1_FALSE])dnl
+_AM_SUBST_NOTMAKE([$1_TRUE])dnl
+_AM_SUBST_NOTMAKE([$1_FALSE])dnl
+m4_define([_AM_COND_VALUE_$1], [$2])dnl
+if $2; then
+  $1_TRUE=
+  $1_FALSE='#'
+else
+  $1_TRUE='#'
+  $1_FALSE=
+fi
+AC_CONFIG_COMMANDS_PRE(
+[if test -z "${$1_TRUE}" && test -z "${$1_FALSE}"; then
+  AC_MSG_ERROR([[conditional "$1" was never defined.
+Usually this means the macro was only invoked conditionally.]])
+fi])])
+
+# Copyright (C) 1999-2021 Free Software Foundation, Inc.
+#
+# This file is free software; the Free Software Foundation
+# gives unlimited permission to copy and/or distribute it,
+# with or without modifications, as long as this notice is preserved.
+
+
+# There are a few dirty hacks below to avoid letting 'AC_PROG_CC' be
+# written in clear, in which case automake, when reading aclocal.m4,
+# will think it sees a *use*, and therefore will trigger all it's
+# C support machinery.  Also note that it means that autoscan, seeing
+# CC etc. in the Makefile, will ask for an AC_PROG_CC use...
+
+
+# _AM_DEPENDENCIES(NAME)
+# ----------------------
+# See how the compiler implements dependency checking.
+# NAME is "CC", "CXX", "OBJC", "OBJCXX", "UPC", or "GJC".
+# We try a few techniques and use that to set a single cache variable.
+#
+# We don't AC_REQUIRE the corresponding AC_PROG_CC since the latter was
+# modified to invoke _AM_DEPENDENCIES(CC); we would have a circular
+# dependency, and given that the user is not expected to run this macro,
+# just rely on AC_PROG_CC.
+AC_DEFUN([_AM_DEPENDENCIES],
+[AC_REQUIRE([AM_SET_DEPDIR])dnl
+AC_REQUIRE([AM_OUTPUT_DEPENDENCY_COMMANDS])dnl
+AC_REQUIRE([AM_MAKE_INCLUDE])dnl
+AC_REQUIRE([AM_DEP_TRACK])dnl
+
+m4_if([$1], [CC],   [depcc="$CC"   am_compiler_list=],
+      [$1], [CXX],  [depcc="$CXX"  am_compiler_list=],
+      [$1], [OBJC], [depcc="$OBJC" am_compiler_list='gcc3 gcc'],
+      [$1], [OBJCXX], [depcc="$OBJCXX" am_compiler_list='gcc3 gcc'],
+      [$1], [UPC],  [depcc="$UPC"  am_compiler_list=],
+      [$1], [GCJ],  [depcc="$GCJ"  am_compiler_list='gcc3 gcc'],
+                    [depcc="$$1"   am_compiler_list=])
+
+AC_CACHE_CHECK([dependency style of $depcc],
+               [am_cv_$1_dependencies_compiler_type],
+[if test -z "$AMDEP_TRUE" && test -f "$am_depcomp"; then
+  # We make a subdir and do the tests there.  Otherwise we can end up
+  # making bogus files that we don't know about and never remove.  For
+  # instance it was reported that on HP-UX the gcc test will end up
+  # making a dummy file named 'D' -- because '-MD' means "put the output
+  # in D".
+  rm -rf conftest.dir
+  mkdir conftest.dir
+  # Copy depcomp to subdir because otherwise we won't find it if we're
+  # using a relative directory.
+  cp "$am_depcomp" conftest.dir
+  cd conftest.dir
+  # We will build objects and dependencies in a subdirectory because
+  # it helps to detect inapplicable dependency modes.  For instance
+  # both Tru64's cc and ICC support -MD to output dependencies as a
+  # side effect of compilation, but ICC will put the dependencies in
+  # the current directory while Tru64 will put them in the object
+  # directory.
+  mkdir sub
+
+  am_cv_$1_dependencies_compiler_type=none
+  if test "$am_compiler_list" = ""; then
+     am_compiler_list=`sed -n ['s/^#*\([a-zA-Z0-9]*\))$/\1/p'] < ./depcomp`
+  fi
+  am__universal=false
+  m4_case([$1], [CC],
+    [case " $depcc " in #(
+     *\ -arch\ *\ -arch\ *) am__universal=true ;;
+     esac],
+    [CXX],
+    [case " $depcc " in #(
+     *\ -arch\ *\ -arch\ *) am__universal=true ;;
+     esac])
+
+  for depmode in $am_compiler_list; do
+    # Setup a source with many dependencies, because some compilers
+    # like to wrap large dependency lists on column 80 (with \), and
+    # we should not choose a depcomp mode which is confused by this.
+    #
+    # We need to recreate these files for each test, as the compiler may
+    # overwrite some of them when testing with obscure command lines.
+    # This happens at least with the AIX C compiler.
+    : > sub/conftest.c
+    for i in 1 2 3 4 5 6; do
+      echo '#include "conftst'$i'.h"' >> sub/conftest.c
+      # Using ": > sub/conftst$i.h" creates only sub/conftst1.h with
+      # Solaris 10 /bin/sh.
+      echo '/* dummy */
+
+FILE: buf.c
+/*
+ * buf.c: memory buffers for libxml2
+ *
+ * new buffer structures and entry points to simplify the maintenance
+ * of libxml2 and ensure we keep good control over memory allocations
+ * and stay 64 bits clean.
+ * The new entry point use the xmlBufPtr opaque structure and
+ * xmlBuf...() counterparts to the old xmlBuf...() functions
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ */
+
+FILE: c14n.c
+/*
+ * "Canonical XML" implementation
+ * http://www.w3.org/TR/xml-c14n
+ *
+ * "Exclusive XML Canonicalization" implementation
+ * http://www.w3.org/TR/xml-exc-c14n
+ *
+ * See Copyright for the status of this software.
+ *
+ * Author: Aleksey Sanin <aleksey@aleksey.com>
+ */
+
+FILE: catalog.c
+/**
+ * catalog.c: set of generic Catalog related routines
+ *
+ * Reference:  SGML Open Technical Resolution TR9401:1997.
+ *             http://www.jclark.com/sp/catalog.htm
+ *
+ *             XML Catalogs Working Draft 06 August 2001
+ *             http://www.oasis-open.org/committees/entity/spec-2001-08-06.html
+ *
+ * See Copyright for the status of this software.
+ *
+ * Daniel.Veillard@imag.fr
+ */
+
+FILE: debugXML.c
+/*
+ * debugXML.c : This is a set of routines used for debugging the tree
+ *              produced by the XML parser.
+ *
+ * See Copyright for the status of this software.
+ *
+ * Daniel Veillard <daniel@veillard.com>
+ */
+
+FILE: dict.c
+/*
+ * dict.c: dictionary of reusable strings, just used to avoid allocation
+ *         and freeing operations.
+ *
+ * Copyright (C) 2003-2012 Daniel Veillard.
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE. THE AUTHORS AND
+ * CONTRIBUTORS ACCEPT NO RESPONSIBILITY IN ANY CONCEIVABLE MANNER.
+ *
+ * Author: daniel@veillard.com
+ */
+
+FILE: doc/examples/io1.c
+/**
+ * section: InputOutput
+ * synopsis: Example of custom Input/Output
+ * purpose: Demonstrate the use of xmlRegisterInputCallbacks
+ *          to build a custom I/O layer, this is used in an
+ *          XInclude method context to show how dynamic document can
+ *          be built in a clean way.
+ * usage: io1
+ * test: io1 > io1.tmp && diff io1.tmp $(srcdir)/io1.res
+ * author: Daniel Veillard
+ * copy: see Copyright for the status of this software.
+ */
+
+FILE: doc/examples/io2.c
+/**
+ * section: InputOutput
+ * synopsis: Output to char buffer
+ * purpose: Demonstrate the use of xmlDocDumpMemory
+ *          to output document to a character buffer
+ * usage: io2
+ * test: io2 > io2.tmp && diff io2.tmp $(srcdir)/io2.res
+ * author: John Fleck
+ * copy: see Copyright for the status of this software.
+ */
+
+FILE: doc/examples/parse1.c
+/**
+ * section: Parsing
+ * synopsis: Parse an XML file to a tree and free it
+ * purpose: Demonstrate the use of xmlReadFile() to read an XML file
+ *          into a tree and xmlFreeDoc() to free the resulting tree
+ * usage: parse1 test1.xml
+ * test: parse1 test1.xml
+ * author: Daniel Veillard
+ * copy: see Copyright for the status of this software.
+ */
+
+FILE: doc/examples/parse2.c
+/**
+ * section: Parsing
+ * synopsis: Parse and validate an XML file to a tree and free the result
+ * purpose: Create a parser context for an XML file, then parse and validate
+ *          the file, creating a tree, check the validation result
+ *          and xmlFreeDoc() to free the resulting tree.
+ * usage: parse2 test2.xml
+ * test: parse2 test2.xml
+ * author: Daniel Veillard
+ * copy: see Copyright for the status of this software.
+ */
+
+FILE: doc/examples/parse3.c
+/**
+ * section: Parsing
+ * synopsis: Parse an XML document in memory to a tree and free it
+ * purpose: Demonstrate the use of xmlReadMemory() to read an XML file
+ *          into a tree and xmlFreeDoc() to free the resulting tree
+ * usage: parse3
+ * test: parse3
+ * author: Daniel Veillard
+ * copy: see Copyright for the status of this software.
+ */
+
+FILE: doc/examples/parse4.c
+/**
+ * section: Parsing
+ * synopsis: Parse an XML document chunk by chunk to a tree and free it
+ * purpose: Demonstrate the use of xmlCreatePushParserCtxt() and
+ *          xmlParseChunk() to read an XML file progressively
+ *          into a tree and xmlFreeDoc() to free the resulting tree
+ * usage: parse4 test3.xml
+ * test: parse4 test3.xml
+ * author: Daniel Veillard
+ * copy: see Copyright for the status of this software.
+ */
+
+FILE: doc/examples/reader1.c
+/**
+ * section: xmlReader
+ * synopsis: Parse an XML file with an xmlReader
+ * purpose: Demonstrate the use of xmlReaderForFile() to parse an XML file
+ *          and dump the information about the nodes found in the process.
+ *          (Note that the XMLReader functions require libxml2 version later
+ *          than 2.6.)
+ * usage: reader1 <filename>
+ * test: reader1 test2.xml > reader1.tmp && diff reader1.tmp $(srcdir)/reader1.res
+ * author: Daniel Veillard
+ * copy: see Copyright for the status of this software.
+ */
+
+FILE: doc/examples/reader2.c
+/**
+ * section: xmlReader
+ * synopsis: Parse and validate an XML file with an xmlReader
+ * purpose: Demonstrate the use of xmlReaderForFile() to parse an XML file
+ *          validating the content in the process and activating options
+ *          like entities substitution, and DTD attributes defaulting.
+ *          (Note that the XMLReader functions require libxml2 version later
+ *          than 2.6.)
+ * usage: reader2 <valid_xml_filename>
+ * test: reader2 test2.xml > reader1.tmp && diff reader1.tmp $(srcdir)/reader1.res
+ * author: Daniel Veillard
+ * copy: see Copyright for the status of this software.
+ */
+
+FILE: doc/examples/reader3.c
+/**
+ * section: xmlReader
+ * synopsis: Show how to extract subdocuments with xmlReader
+ * purpose: Demonstrate the use of xmlTextReaderPreservePattern() 
+ *          to parse an XML file with the xmlReader while collecting
+ *          only some subparts of the document.
+ *          (Note that the XMLReader functions require libxml2 version later
+ *          than 2.6.)
+ * usage: reader3
+ * test: reader3 > reader3.tmp && diff reader3.tmp $(srcdir)/reader3.res
+ * author: Daniel Veillard
+ * copy: see Copyright for the status of this software.
+ */
+
+FILE: doc/examples/reader4.c
+/**
+ * section: xmlReader
+ * synopsis: Parse multiple XML files reusing an xmlReader
+ * purpose: Demonstrate the use of xmlReaderForFile() and
+ * xmlReaderNewFile to parse XML files while reusing the reader object
+ * and parser context.  (Note that the XMLReader functions require
+ * libxml2 version later than 2.6.)
+ * usage: reader4 <filename> [ filename ... ]
+ * test: reader4 test1.xml test2.xml test3.xml > reader4.tmp && diff reader4.tmp $(srcdir)/reader4.res
+ * author: Graham Bennett
+ * copy: see Copyright for the status of this software.
+ */
+
+FILE: doc/examples/testWriter.c
+/**
+ * section: xmlWriter
+ * synopsis: use various APIs for the xmlWriter
+ * purpose: tests a number of APIs for the xmlWriter, especially
+ *          the various methods to write to a filename, to a memory
+ *          buffer, to a new document, or to a subtree. It shows how to
+ *          do encoding string conversions too. The resulting
+ *          documents are then serialized.
+ * usage: testWriter
+ * test: testWriter && for i in 1 2 3 4 ; do diff $(srcdir)/writer.xml writer$$i.tmp || break ; done
+ * author: Alfred Mickautsch
+ * copy: see Copyright for the status of this software.
+ */
+
+FILE: doc/examples/tree1.c
+/**
+ * section: Tree
+ * synopsis: Navigates a tree to print element names
+ * purpose: Parse a file to a tree, use xmlDocGetRootElement() to
+ *          get the root element, then walk the document and print
+ *          all the element name in document order.
+ * usage: tree1 filename_or_URL
+ * test: tree1 test2.xml > tree1.tmp && diff tree1.tmp $(srcdir)/tree1.res
+ * author: Dodji Seketeli
+ * copy: see Copyright for the status of this software.
+ */
+
+FILE: doc/examples/tree2.c
+/* 
+ * section:  Tree
+ * synopsis: Creates a tree
+ * purpose:  Shows how to create document, nodes and dump it to stdout or file.
+ * usage:    tree2 <filename>  -Default output: stdout
+ * test:     tree2 > tree2.tmp && diff tree2.tmp $(srcdir)/tree2.res
+ * author:   Lucas Brasilino <brasilino@recife.pe.gov.br>
+ * copy:     see Copyright for the status of this software
+ */
+
+FILE: doc/examples/xpath1.c
+/** 
+ * section: 	XPath
+ * synopsis: 	Evaluate XPath expression and prints result node set.
+ * purpose: 	Shows how to evaluate XPath expression and register 
+ *          	known namespaces in XPath context.
+ * usage:	xpath1 <xml-file> <xpath-expr> [<known-ns-list>]
+ * test:	xpath1 test3.xml '//child2' > xpath1.tmp && diff xpath1.tmp $(srcdir)/xpath1.res
+ * author: 	Aleksey Sanin
+ * copy: 	see Copyright for the status of this software.
+ */
+
+FILE: doc/examples/xpath2.c
+/** 
+ * section: 	XPath
+ * synopsis: 	Load a document, locate subelements with XPath, modify
+ *              said elements and save the resulting document.
+ * purpose: 	Shows how to make a full round-trip from a load/edit/save
+ * usage:	xpath2 <xml-file> <xpath-expr> <new-value>
+ * test:	xpath2 test3.xml '//discarded' discarded > xpath2.tmp && diff xpath2.tmp $(srcdir)/xpath2.res
+ * author: 	Aleksey Sanin and Daniel Veillard
+ * copy: 	see Copyright for the status of this software.
+ */
+
+FILE: encoding.c
+/*
+ * encoding.c : implements the encoding conversion functions needed for XML
+ *
+ * Related specs:
+ * rfc2044        (UTF-8 and UTF-16) F. Yergeau Alis Technologies
+ * rfc2781        UTF-16, an encoding of ISO 10646, P. Hoffman, F. Yergeau
+ * [ISO-10646]    UTF-8 and UTF-16 in Annexes
+ * [ISO-8859-1]   ISO Latin-1 characters codes.
+ * [UNICODE]      The Unicode Consortium, "The Unicode Standard --
+ *                Worldwide Character Encoding -- Version 1.0", Addison-
+ *                Wesley, Volume 1, 1991, Volume 2, 1992.  UTF-8 is
+ *                described in Unicode Technical Report #4.
+ * [US-ASCII]     Coded Character Set--7-bit American Standard Code for
+ *                Information Interchange, ANSI X3.4-1986.
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ *
+ * Original code for IsoLatin1 and UTF-16 by "Martin J. Duerst" <duerst@w3.org>
+ */
+
+FILE: entities.c
+/*
+ * entities.c : implementation for the XML entities handling
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ */
+
+FILE: error.c
+/*
+ * error.c: module displaying/handling XML parser errors
+ *
+ * See Copyright for the status of this software.
+ *
+ * Daniel Veillard <daniel@veillard.com>
+ */
+
+FILE: example/gjobread.c
+/*
+ * gjobread.c : a small test program for gnome jobs XML format
+ *
+ * See Copyright for the status of this software.
+ *
+ * Daniel.Veillard@w3.org
+ */
+
+FILE: fuzz/fuzz.c
+/*
+ * fuzz.c: Common functions for fuzzing.
+ *
+ * See Copyright for the status of this software.
+ */
+
+FILE: fuzz/fuzz.h
+/*
+ * fuzz.h: Common functions and macros for fuzzing.
+ *
+ * See Copyright for the status of this software.
+ */
+
+FILE: fuzz/genSeed.c
+/*
+ * xmlSeed.c: Generate the XML seed corpus for fuzzing.
+ *
+ * See Copyright for the status of this software.
+ */
+
+FILE: fuzz/html.c
+/*
+ * html.c: a libFuzzer target to test several HTML parser interfaces.
+ *
+ * See Copyright for the status of this software.
+ */
+
+FILE: fuzz/regexp.c
+/*
+ * regexp.c: a libFuzzer target to test the regexp module.
+ *
+ * See Copyright for the status of this software.
+ */
+
+FILE: fuzz/schema.c
+/*
+ * schema.c: a libFuzzer target to test the XML Schema processor.
+ *
+ * See Copyright for the status of this software.
+ */
+
+FILE: fuzz/testFuzzer.c
+/*
+ * testFuzzer.c: Test program for the custom entity loader used to fuzz
+ * with multiple inputs.
+ *
+ * See Copyright for the status of this software.
+ */
+
+FILE: fuzz/uri.c
+/*
+ * uri.c: a libFuzzer target to test the URI module.
+ *
+ * See Copyright for the status of this software.
+ */
+
+FILE: fuzz/valid.c
+/*
+ * valid.c: a libFuzzer target to test DTD validation.
+ *
+ * See Copyright for the status of this software.
+ */
+
+FILE: fuzz/xinclude.c
+/*
+ * xinclude.c: a libFuzzer target to test the XInclude engine.
+ *
+ * See Copyright for the status of this software.
+ */
+
+FILE: fuzz/xml.c
+/*
+ * xml.c: a libFuzzer target to test several XML parser interfaces.
+ *
+ * See Copyright for the status of this software.
+ */
+
+FILE: fuzz/xpath.c
+/*
+ * xpath.c: a libFuzzer target to test XPath and XPointer expressions.
+ *
+ * See Copyright for the status of this software.
+ */
+
+FILE: globals.c
+/*
+ * globals.c: definition and handling of the set of global variables
+ *            of the library
+ *
+ * The bottom of this file is automatically generated by build_glob.py
+ * based on the description file global.data
+ *
+ * See Copyright for the status of this software.
+ *
+ * Gary Pennington <Gary.Pennington@uk.sun.com>
+ * daniel@veillard.com
+ */
+
+FILE: hash.c
+/*
+ * hash.c: chained hash tables
+ *
+ * Reference: Your favorite introductory book on algorithms
+ *
+ * Copyright (C) 2000,2012 Bjorn Reese and Daniel Veillard.
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE. THE AUTHORS AND
+ * CONTRIBUTORS ACCEPT NO RESPONSIBILITY IN ANY CONCEIVABLE MANNER.
+ *
+ * Author: breese@users.sourceforge.net
+ */
+
+FILE: include/libxml/HTMLparser.h
+/*
+ * Summary: interface for an HTML 4.0 non-verifying parser
+ * Description: this module implements an HTML 4.0 non-verifying parser
+ *              with API compatible with the XML parser ones. It should
+ *              be able to parse "real world" HTML, even if severely
+ *              broken from a specification point of view.
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/HTMLtree.h
+/*
+ * Summary: specific APIs to process HTML tree, especially serialization
+ * Description: this module implements a few function needed to process
+ *              tree in an HTML specific way.
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/SAX.h
+/*
+ * Summary: Old SAX version 1 handler, deprecated
+ * Description: DEPRECATED set of SAX version 1 interfaces used to
+ *              build the DOM tree.
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/SAX2.h
+/*
+ * Summary: SAX2 parser interface used to build the DOM tree
+ * Description: those are the default SAX2 interfaces used by
+ *              the library when building DOM tree.
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/c14n.h
+/*
+ * Summary: Provide Canonical XML and Exclusive XML Canonicalization
+ * Description: the c14n modules provides a
+ *
+ * "Canonical XML" implementation
+ * http://www.w3.org/TR/xml-c14n
+ *
+ * and an
+ *
+ * "Exclusive XML Canonicalization" implementation
+ * http://www.w3.org/TR/xml-exc-c14n
+
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Aleksey Sanin <aleksey@aleksey.com>
+ */
+
+FILE: include/libxml/catalog.h
+/**
+ * Summary: interfaces to the Catalog handling system
+ * Description: the catalog module implements the support for
+ * XML Catalogs and SGML catalogs
+ *
+ * SGML Open Technical Resolution TR9401:1997.
+ * http://www.jclark.com/sp/catalog.htm
+ *
+ * XML Catalogs Working Draft 06 August 2001
+ * http://www.oasis-open.org/committees/entity/spec-2001-08-06.html
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/debugXML.h
+/*
+ * Summary: Tree debugging APIs
+ * Description: Interfaces to a set of routines used for debugging the tree
+ *              produced by the XML parser.
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/dict.h
+/*
+ * Summary: string dictionary
+ * Description: dictionary of reusable strings, just used to avoid allocation
+ *         and freeing operations.
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/encoding.h
+/*
+ * Summary: interface for the encoding conversion functions
+ * Description: interface for the encoding conversion functions needed for
+ *              XML basic encoding and iconv() support.
+ *
+ * Related specs are
+ * rfc2044        (UTF-8 and UTF-16) F. Yergeau Alis Technologies
+ * [ISO-10646]    UTF-8 and UTF-16 in Annexes
+ * [ISO-8859-1]   ISO Latin-1 characters codes.
+ * [UNICODE]      The Unicode Consortium, "The Unicode Standard --
+ *                Worldwide Character Encoding -- Version 1.0", Addison-
+ *                Wesley, Volume 1, 1991, Volume 2, 1992.  UTF-8 is
+ *                described in Unicode Technical Report #4.
+ * [US-ASCII]     Coded Character Set--7-bit American Standard Code for
+ *                Information Interchange, ANSI X3.4-1986.
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/entities.h
+/*
+ * Summary: interface for the XML entities handling
+ * Description: this module provides some of the entity API needed
+ *              for the parser and applications.
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/globals.h
+/*
+ * Summary: interface for all global variables of the library
+ * Description: all the global variables and thread handling for
+ *              those variables is handled by this module.
+ *
+ * The bottom of this file is automatically generated by build_glob.py
+ * based on the description file global.data
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Gary Pennington <Gary.Pennington@uk.sun.com>, Daniel Veillard
+ */
+
+FILE: include/libxml/hash.h
+/*
+ * Summary: Chained hash tables
+ * Description: This module implements the hash table support used in
+ *		various places in the library.
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Bjorn Reese <bjorn.reese@systematic.dk>
+ */
+
+FILE: include/libxml/list.h
+/*
+ * Summary: lists interfaces
+ * Description: this module implement the list support used in
+ * various place in the library.
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Gary Pennington <Gary.Pennington@uk.sun.com>
+ */
+
+FILE: include/libxml/nanoftp.h
+/*
+ * Summary: minimal FTP implementation
+ * Description: minimal FTP implementation allowing to fetch resources
+ *              like external subset. This module is DEPRECATED, do not
+ *              use any of its functions.
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/nanohttp.h
+/*
+ * Summary: minimal HTTP implementation
+ * Description: minimal HTTP implementation allowing to fetch resources
+ *              like external subset.
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/parser.h
+/*
+ * Summary: the core parser module
+ * Description: Interfaces, constants and types related to the XML parser
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/parserInternals.h
+/*
+ * Summary: internals routines and limits exported by the parser.
+ * Description: this module exports a number of internal parsing routines
+ *              they are not really all intended for applications but
+ *              can prove useful doing low level processing.
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/pattern.h
+/*
+ * Summary: pattern expression handling
+ * Description: allows to compile and test pattern expressions for nodes
+ *              either in a tree or based on a parser state.
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/relaxng.h
+/*
+ * Summary: implementation of the Relax-NG validation
+ * Description: implementation of the Relax-NG validation
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/schemasInternals.h
+/*
+ * Summary: internal interfaces for XML Schemas
+ * Description: internal interfaces for the XML Schemas handling
+ *              and schema validity checking
+ *		The Schemas development is a Work In Progress.
+ *              Some of those interfaces are not guaranteed to be API or ABI stable !
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/schematron.h
+/*
+ * Summary: XML Schematron implementation
+ * Description: interface to the XML Schematron validity checking.
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/threads.h
+/**
+ * Summary: interfaces for thread handling
+ * Description: set of generic threading related routines
+ *              should work with pthreads, Windows native or TLS threads
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/tree.h
+/*
+ * Summary: interfaces for tree manipulation
+ * Description: this module describes the structures found in an tree resulting
+ *              from an XML or HTML parsing, as well as the API provided for
+ *              various processing on that tree
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/uri.h
+/**
+ * Summary: library of generic URI related routines
+ * Description: library of generic URI related routines
+ *              Implements RFC 2396
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/valid.h
+/*
+ * Summary: The DTD validation
+ * Description: API for the DTD handling and the validity checking
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/xinclude.h
+/*
+ * Summary: implementation of XInclude
+ * Description: API to handle XInclude processing,
+ * implements the
+ * World Wide Web Consortium Last Call Working Draft 10 November 2003
+ * http://www.w3.org/TR/2003/WD-xinclude-20031110
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/xlink.h
+/*
+ * Summary: unfinished XLink detection module
+ * Description: unfinished XLink detection module
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/xmlIO.h
+/*
+ * Summary: interface for the I/O interfaces used by the parser
+ * Description: interface for the I/O interfaces used by the parser
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/xmlautomata.h
+/*
+ * Summary: API to build regexp automata
+ * Description: the API to build regexp automata
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/xmlerror.h
+/*
+ * Summary: error handling
+ * Description: the API used to report errors
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/xmlexports.h
+/*
+ * Summary: macros for marking symbols as exportable/importable.
+ * Description: macros for marking symbols as exportable/importable.
+ *
+ * Copy: See Copyright for the status of this software.
+ */
+
+FILE: include/libxml/xmlmemory.h
+/*
+ * Summary: interface for the memory allocator
+ * Description: provides interfaces for the memory allocator,
+ *              including debugging capabilities.
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/xmlmodule.h
+/*
+ * Summary: dynamic module loading
+ * Description: basic API for dynamic module loading, used by
+ *              libexslt added in 2.6.17
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Joel W. Reed
+ */
+
+FILE: include/libxml/xmlreader.h
+/*
+ * Summary: the XMLReader implementation
+ * Description: API of the XML streaming API based on C# interfaces.
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/xmlregexp.h
+/*
+ * Summary: regular expressions handling
+ * Description: basic API for libxml regular expressions handling used
+ *              for XML Schemas and validation.
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/xmlsave.h
+/*
+ * Summary: the XML document serializer
+ * Description: API to save document or subtree of document
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/xmlschemas.h
+/*
+ * Summary: incomplete XML Schemas structure implementation
+ * Description: interface to the XML Schemas handling and schema validity
+ *              checking, it is incomplete right now.
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/xmlschemastypes.h
+/*
+ * Summary: implementation of XML Schema Datatypes
+ * Description: module providing the XML Schema Datatypes implementation
+ *              both definition and validity checking
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/xmlstring.h
+/*
+ * Summary: set of routines to process strings
+ * Description: type and interfaces needed for the internal string handling
+ *              of the library, especially UTF8 processing.
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/xmlversion.h.in
+/*
+ * Summary: compile-time version information
+ * Description: compile-time version information for the XML library
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/xmlwriter.h
+/*
+ * Summary: text writing API for XML
+ * Description: text writing API for XML
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Alfred Mickautsch <alfred@mickautsch.de>
+ */
+
+FILE: include/libxml/xpath.h
+/*
+ * Summary: XML Path Language implementation
+ * Description: API for the XML Path Language implementation
+ *
+ * XML Path Language implementation
+ * XPath is a language for addressing parts of an XML document,
+ * designed to be used by both XSLT and XPointer
+ *     http://www.w3.org/TR/xpath
+ *
+ * Implements
+ * W3C Recommendation 16 November 1999
+ *     http://www.w3.org/TR/1999/REC-xpath-19991116
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/xpathInternals.h
+/*
+ * Summary: internal interfaces for XML Path Language implementation
+ * Description: internal interfaces for XML Path Language implementation
+ *              used to build new modules on top of XPath like XPointer and
+ *              XSLT
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/libxml/xpointer.h
+/*
+ * Summary: API to handle XML Pointers
+ * Description: API to handle XML Pointers
+ * Base implementation was made accordingly to
+ * W3C Candidate Recommendation 7 June 2000
+ * http://www.w3.org/TR/2000/CR-xptr-20000607
+ *
+ * Added support for the element() scheme described in:
+ * W3C Proposed Recommendation 13 November 2002
+ * http://www.w3.org/TR/2002/PR-xptr-element-20021113/
+ *
+ * Copy: See Copyright for the status of this software.
+ *
+ * Author: Daniel Veillard
+ */
+
+FILE: include/private/xzlib.h
+/**
+ * xzlib.h: header for the front end for the transparent support of lzma
+ *          compression at the I/O layer
+ *
+ * See Copyright for the status of this software.
+ *
+ * Anders F Bjorklund <afb@users.sourceforge.net>
+ */
+
+FILE: legacy.c
+/*
+ * legacy.c: set of deprecated routines, not to be used anymore but
+ *           kept purely for ABI compatibility
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ */
+
+FILE: libxml.h
+/*
+ * libxml.h: internal header only used during the compilation of libxml
+ *
+ * See COPYRIGHT for the status of this software
+ *
+ * Author: breese@users.sourceforge.net
+ */
+
+FILE: list.c
+/*
+ * list.c: lists handling implementation
+ *
+ * Copyright (C) 2000 Gary Pennington and Daniel Veillard.
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE. THE AUTHORS AND
+ * CONTRIBUTORS ACCEPT NO RESPONSIBILITY IN ANY CONCEIVABLE MANNER.
+ *
+ * Author: Gary.Pennington@uk.sun.com
+ */
+
+FILE: ltmain.sh
+/*) ;; *) break ;; esac
+
+        # ...otherwise throw away the child directory and loop
+        _G_directory_path=`$ECHO "$_G_directory_path" | $SED -e "$sed_dirname"`
+      done
+      _G_dir_list=`$ECHO "$_G_dir_list" | $SED 's|:*$||'`
+
+      func_mkdir_p_IFS=$IFS; IFS=:
+      for _G_dir in $_G_dir_list; do
+	IFS=$func_mkdir_p_IFS
+        # mkdir can fail with a 'File exist' error if two processes
+        # try to create one of the directories concurrently.  Don't
+        # stop in that case!
+        $MKDIR "$_G_dir" 2>/dev/null || :
+      done
+      IFS=$func_mkdir_p_IFS
+
+      # Bail out if we (or some other process) failed to create a directory.
+      test -d "$_G_directory_path" || \
+        func_fatal_error "Failed to create '$1'"
+    fi
+}
+
+
+# func_mktempdir [BASENAME]
+# -------------------------
+# Make a temporary directory that won't clash with other running
+# libtool processes, and avoids race conditions if possible.  If
+# given, BASENAME is the basename for that directory.
+func_mktempdir ()
+{
+    $debug_cmd
+
+    _G_template=${TMPDIR-/tmp}/${1-$progname}
+
+    if test : = "$opt_dry_run"; then
+      # Return a directory name, but don't create it in dry-run mode
+      _G_tmpdir=$_G_template-$$
+    else
+
+      # If mktemp works, use that first and foremost
+      _G_tmpdir=`mktemp -d "$_G_template-XXXXXXXX" 2>/dev/null`
+
+      if test ! -d "$_G_tmpdir"; then
+        # Failing that, at least try and use $RANDOM to avoid a race
+        _G_tmpdir=$_G_template-${RANDOM-0}$$
+
+        func_mktempdir_umask=`umask`
+        umask 0077
+        $MKDIR "$_G_tmpdir"
+        umask $func_mktempdir_umask
+      fi
+
+      # If we're not in dry-run mode, bomb out on failure
+      test -d "$_G_tmpdir" || \
+        func_fatal_error "cannot create temporary directory '$_G_tmpdir'"
+    fi
+
+    $ECHO "$_G_tmpdir"
+}
+
+
+# func_normal_abspath PATH
+# ------------------------
+# Remove doubled-up and trailing slashes, "." path components,
+# and cancel out any ".." path components in PATH after making
+# it an absolute path.
+func_normal_abspath ()
+{
+    $debug_cmd
+
+    # These SED scripts presuppose an absolute path with a trailing slash.
+    _G_pathcar='s|^/\([^/]*\).*$|\1|'
+    _G_pathcdr='s|^/[^/]*||'
+    _G_removedotparts=':dotsl
+		s|/\./|/|g
+		t dotsl
+		s|/\.$|/|'
+    _G_collapseslashes='s|/\{1,\}|/|g'
+    _G_finalslash='s|/*$|/|'
+
+    # Start from root dir and reassemble the path.
+    func_normal_abspath_result=
+    func_normal_abspath_tpath=$1
+    func_normal_abspath_altnamespace=
+    case $func_normal_abspath_tpath in
+      "")
+        # Empty path, that just means $cwd.
+        func_stripname '' '/' "`pwd`"
+        func_normal_abspath_result=$func_stripname_result
+        return
+        ;;
+      # The next three entries are used to spot a run of precisely
+      # two leading slashes without using negated character classes;
+      # we take advantage of case's first-match behaviour.
+      ///*)
+        # Unusual form of absolute path, do nothing.
+        ;;
+      //*)
+        # Not necessarily an ordinary path; POSIX reserves leading '//'
+        # and for example Cygwin uses it to access remote file shares
+        # over CIFS/SMB, so we conserve a leading double slash if found.
+        func_normal_abspath_altnamespace=/
+        ;;
+      /*)
+        # Absolute path, do nothing.
+        ;;
+      *)
+        # Relative path, prepend $cwd.
+        func_normal_abspath_tpath=`pwd`/$func_normal_abspath_tpath
+        ;;
+    esac
+
+    # Cancel out all the simple stuff to save iterations.  We also want
+    # the path to end with a slash for ease of parsing, so make sure
+    # there is one (and only one) here.
+    func_normal_abspath_tpath=`$ECHO "$func_normal_abspath_tpath" | $SED \
+          -e "$_G_removedotparts" -e "$_G_collapseslashes" -e "$_G_finalslash"`
+    while :; do
+      # Processed it all yet?
+      if test / = "$func_normal_abspath_tpath"; then
+        # If we ascended to the root using ".." the result may be empty now.
+        if test -z "$func_normal_abspath_result"; then
+          func_normal_abspath_result=/
+        fi
+        break
+      fi
+      func_normal_abspath_tcomponent=`$ECHO "$func_normal_abspath_tpath" | $SED \
+          -e "$_G_pathcar"`
+      func_normal_abspath_tpath=`$ECHO "$func_normal_abspath_tpath" | $SED \
+          -e "$_G_pathcdr"`
+      # Figure out what to do with it
+      case $func_normal_abspath_tcomponent in
+        "")
+          # Trailing empty path component, ignore it.
+          ;;
+        ..)
+          # Parent dir; strip last assembled component from result.
+          func_dirname "$func_normal_abspath_result"
+          func_normal_abspath_result=$func_dirname_result
+          ;;
+        *)
+          # Actual path component, append it.
+          func_append func_normal_abspath_result "/$func_normal_abspath_tcomponent"
+          ;;
+      esac
+    done
+    # Restore leading double-slash if one was found on entry.
+    func_normal_abspath_result=$func_normal_abspath_altnamespace$func_normal_abspath_result
+}
+
+
+# func_notquiet ARG...
+# --------------------
+# Echo program name prefixed message only when not in quiet mode.
+func_notquiet ()
+{
+    $debug_cmd
+
+    $opt_quiet || func_echo ${1+"$@"}
+
+    # A bug in bash halts the script if the last line of a function
+    # fails when set -e is in force, so we need another command to
+    # work around that:
+    :
+}
+
+
+# func_relative_path SRCDIR DSTDIR
+# --------------------------------
+# Set func_relative_path_result to the relative path from SRCDIR to DSTDIR.
+func_relative_path ()
+{
+    $debug_cmd
+
+    func_relative_path_result=
+    func_normal_abspath "$1"
+    func_relative_path_tlibdir=$func_normal_abspath_result
+    func_normal_abspath "$2"
+    func_relative_path_tbindir=$func_normal_abspath_result
+
+    # Ascend the tree starting from libdir
+    while :; do
+      # check if we have found a prefix of bindir
+      case $func_relative_path_tbindir in
+        $func_relative_path_tlibdir)
+          # found an exact match
+          func_relative_path_tcancelled=
+          break
+          ;;
+        $func_relative_path_tlibdir*)
+          # found a matching prefix
+          func_stripname "$func_relative_path_tlibdir" '' "$func_relative_path_tbindir"
+          func_relative_path_tcancelled=$func_stripname_result
+          if test -z "$func_relative_path_result"; then
+            func_relative_path_result=.
+          fi
+          break
+          ;;
+        *)
+          func_dirname $func_relative_path_tlibdir
+          func_relative_path_tlibdir=$func_dirname_result
+          if test -z "$func_relative_path_tlibdir"; then
+            # Have to descend all the way to the root!
+            func_relative_path_result=../$func_relative_path_result
+            func_relative_path_tcancelled=$func_relative_path_tbindir
+            break
+          fi
+          func_relative_path_result=../$func_relative_path_result
+          ;;
+      esac
+    done
+
+    # Now calculate path; take care to avoid doubling-up slashes.
+    func_stripname '' '/' "$func_relative_path_result"
+    func_relative_path_result=$func_stripname_result
+    func_stripname '/' '/' "$func_relative_path_tcancelled"
+    if test -n "$func_stripname_result"; then
+      func_append func_relative_path_result "/$func_stripname_result"
+    fi
+
+    # Normalisation. If bindir is libdir, return '.' else relative path.
+    if test -n "$func_relative_path_result"; then
+      func_stripname './' '' "$func_relative_path_result"
+      func_relative_path_result=$func_stripname_result
+    fi
+
+    test -n "$func_relative_path_result" || func_relative_path_result=.
+
+    :
+}
+
+
+# func_quote_for_eval ARG...
+# --------------------------
+# Aesthetically quote ARGs to be evaled later.
+# This function returns two values:
+#   i) func_quote_for_eval_result
+#      double-quoted, suitable for a subsequent eval
+#  ii) func_quote_for_eval_unquoted_result
+#      has all characters that are still active within double
+#      quotes backslashified.
+func_quote_for_eval ()
+{
+    $debug_cmd
+
+    func_quote_for_eval_unquoted_result=
+    func_quote_for_eval_result=
+    while test 0 -lt $#; do
+      case $1 in
+        *[\\\`\"\$]*)
+	  _G_unquoted_arg=`printf '%s\n' "$1" |$SED "$sed_quote_subst"` ;;
+        *)
+          _G_unquoted_arg=$1 ;;
+      esac
+      if test -n "$func_quote_for_eval_unquoted_result"; then
+	func_append func_quote_for_eval_unquoted_result " $_G_unquoted_arg"
+      else
+        func_append func_quote_for_eval_unquoted_result "$_G_unquoted_arg"
+      fi
+
+      case $_G_unquoted_arg in
+        # Double-quote args containing shell metacharacters to delay
+        # word splitting, command substitution and variable expansion
+        # for a subsequent eval.
+        # Many Bourne shells cannot handle close brackets correctly
+        # in scan sets, so we specify it separately.
+        *[\[\~\#\^\&\*\(\)\{\}\|\;\<\>\?\'\ \	]*|*]*|"")
+          _G_quoted_arg=\"$_G_unquoted_arg\"
+          ;;
+        *)
+          _G_quoted_arg=$_G_unquoted_arg
+	  ;;
+      esac
+
+      if test -n "$func_quote_for_eval_result"; then
+	func_append func_quote_for_eval_result " $_G_quoted_arg"
+      else
+        func_append func_quote_for_eval_result "$_G_quoted_arg"
+      fi
+      shift
+    done
+}
+
+
+# func_quote_for_expand ARG
+# -------------------------
+# Aesthetically quote ARG to be evaled later; same as above,
+# but do not quote variable references.
+func_quote_for_expand ()
+{
+    $debug_cmd
+
+    case $1 in
+      *[\\\`\"]*)
+	_G_arg=`$ECHO "$1" | $SED \
+	    -e "$sed_double_quote_subst" -e "$sed_double_backslash"` ;;
+      *)
+        _G_arg=$1 ;;
+    esac
+
+    case $_G_arg in
+      # Double-quote args containing shell metacharacters to delay
+      # word splitting and command substitution for a subsequent eval.
+      # Many Bourne shells cannot handle close brackets correctly
+      # in scan sets, so we specify it separately.
+      *[\[\~\#\^\&\*\(\)\{\}\|\;\<\>\?\'\ \	]*|*]*|"")
+        _G_arg=\"$_G_arg\"
+        ;;
+    esac
+
+    func_quote_for_expand_result=$_G_arg
+}
+
+
+# func_stripname PREFIX SUFFIX NAME
+# ---------------------------------
+# strip PREFIX and SUFFIX from NAME, and store in func_stripname_result.
+# PREFIX and SUFFIX must not contain globbing or regex special
+# characters, hashes, percent signs, but SUFFIX may contain a leading
+# dot (in which case that matches only a dot).
+if test yes = "$_G_HAVE_XSI_OPS"; then
+  eval 'func_stripname ()
+  {
+    $debug_cmd
+
+    # pdksh 5.2.14 does not do ${X%$Y} correctly if both X and Y are
+    # positional parameters, so assign one to ordinary variable first.
+    func_stripname_result=$3
+    func_stripname_result=${func_stripname_result#"$1"}
+    func_stripname_result=${func_stripname_result%"$2"}
+  }'
+else
+  func_stripname ()
+  {
+    $debug_cmd
+
+    case $2 in
+      .*) func_stripname_result=`$ECHO "$3" | $SED -e "s%^$1%%" -e "s%\\\\$2\$%%"`;;
+      *)  func_stripname_result=`$ECHO "$3" | $SED -e "s%^$1%%" -e "s%$2\$%%"`;;
+    esac
+  }
+fi
+
+
+# func_show_eval CMD [FAIL_EXP]
+# -----------------------------
+# Unless opt_quiet is true, then output CMD.  Then, if opt_dryrun is
+# not true, evaluate CMD.  If the evaluation of CMD fails, and FAIL_EXP
+# is given, then evaluate it.
+func_show_eval ()
+{
+    $debug_cmd
+
+    _G_cmd=$1
+    _G_fail_exp=${2-':'}
+
+    func_quote_for_expand "$_G_cmd"
+    eval "func_notquiet $func_quote_for_expand_result"
+
+    $opt_dry_run || {
+      eval "$_G_cmd"
+      _G_status=$?
+      if test 0 -ne "$_G_status"; then
+	eval "(exit $_G_status); $_G_fail_exp"
+      fi
+    }
+}
+
+
+# func_show_eval_locale CMD [FAIL_EXP]
+# ------------------------------------
+# Unless opt_quiet is true, then output CMD.  Then, if opt_dryrun is
+# not true, evaluate CMD.  If the evaluation of CMD fails, and FAIL_EXP
+# is given, then evaluate it.  Use the saved locale for evaluation.
+func_show_eval_locale ()
+{
+    $debug_cmd
+
+    _G_cmd=$1
+    _G_fail_exp=${2-':'}
+
+    $opt_quiet || {
+      func_quote_for_expand "$_G_cmd"
+      eval "func_echo $func_quote_for_expand_result"
+    }
+
+    $opt_dry_run || {
+      eval "$_G_user_locale
+	    $_G_cmd"
+      _G_status=$?
+      eval "$_G_safe_locale"
+      if test 0 -ne "$_G_status"; then
+	eval "(exit $_G_status); $_G_fail_exp"
+      fi
+    }
+}
+
+
+# func_tr_sh
+# ----------
+# Turn $1 into a string suitable for a shell variable name.
+# Result is stored in $func_tr_sh_result.  All characters
+# not in the set a-zA-Z0-9_ are replaced with '_'. Further,
+# if $1 begins with a digit, a '_' is prepended as well.
+func_tr_sh ()
+{
+    $debug_cmd
+
+    case $1 in
+    [0-9]* | *[!a-zA-Z0-9_]*)
+      func_tr_sh_result=`$ECHO "$1" | $SED -e 's/^\([0-9]\)/_\1/' -e 's/[^a-zA-Z0-9_]/_/g'`
+      ;;
+    * )
+      func_tr_sh_result=$1
+      ;;
+    esac
+}
+
+
+# func_verbose ARG...
+# -------------------
+# Echo program name prefixed message in verbose mode only.
+func_verbose ()
+{
+    $debug_cmd
+
+    $opt_verbose && func_echo "$*"
+
+    :
+}
+
+
+# func_warn_and_continue ARG...
+# -----------------------------
+# Echo program name prefixed warning message to standard error.
+func_warn_and_continue ()
+{
+    $debug_cmd
+
+    $require_term_colors
+
+    func_echo_infix_1 "${tc_red}warning$tc_reset" "$*" >&2
+}
+
+
+# func_warning CATEGORY ARG...
+# ----------------------------
+# Echo program name prefixed warning message to standard error. Warning
+# messages can be filtered according to CATEGORY, where this function
+# elides messages where CATEGORY is not listed in the global variable
+# 'opt_warning_types'.
+func_warning ()
+{
+    $debug_cmd
+
+    # CATEGORY must be in the warning_categories list!
+    case " $warning_categories " in
+      *" $1 "*) ;;
+      *) func_internal_error "invalid warning category '$1'" ;;
+    esac
+
+    _G_category=$1
+    shift
+
+    case " $opt_warning_types " in
+      *" $_G_category "*) $warning_func ${1+"$@"} ;;
+    esac
+}
+
+
+# func_sort_ver VER1 VER2
+# -----------------------
+# 'sort -V' is not generally available.
+# Note this deviates from the version comparison in automake
+# in that it treats 1.5 < 1.5.0, and treats 1.4.4a < 1.4-p3a
+# but this should suffice as we won't be specifying old
+# version formats or redundant trailing .0 in bootstrap.conf.
+# If we did want full compatibility then we should probably
+# use m4_version_compare from autoconf.
+func_sort_ver ()
+{
+    $debug_cmd
+
+    printf '%s\n%s\n' "$1" "$2" \
+      | sort -t. -k 1,1n -k 2,2n -k 3,3n -k 4,4n -k 5,5n -k 6,6n -k 7,7n -k 8,8n -k 9,9n
+}
+
+# func_lt_ver PREV CURR
+# ---------------------
+# Return true if PREV and CURR are in the correct order according to
+# func_sort_ver, otherwise false.  Use it like this:
+#
+#  func_lt_ver "$prev_ver" "$proposed_ver" || func_fatal_error "..."
+func_lt_ver ()
+{
+    $debug_cmd
+
+    test "x$1" = x`func_sort_ver "$1" "$2" | $SED 1q`
+}
+
+
+# Local variables:
+# mode: shell-script
+# sh-indentation: 2
+# eval: (add-hook 'before-save-hook 'time-stamp)
+# time-stamp-pattern: "10/scriptversion=%:y-%02m-%02d.%02H; # UTC"
+# time-stamp-time-zone: "UTC"
+# End:
+#! /bin/sh
+
+# Set a version string for this script.
+scriptversion=2015-10-07.11; # UTC
+
+# A portable, pluggable option parser for Bourne shell.
+# Written by Gary V. Vaughan, 2010
+
+# Copyright (C) 2010-2015 Free Software Foundation, Inc.
+# This is free software; see the source for copying conditions.  There is NO
+# warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Please report bugs or propose patches to gary@gnu.org.
+
+
+## ------ ##
+## Usage. ##
+## ------ ##
+
+# This file is a library for parsing options in your shell scripts along
+# with assorted other useful supporting features that you can make use
+# of too.
+#
+# For the simplest scripts you might need only:
+#
+#   #!/bin/sh
+#   . relative/path/to/funclib.sh
+#   . relative/path/to/options-parser
+#   scriptversion=1.0
+#   func_options ${1+"$@"}
+#   eval set dummy "$func_options_result"; shift
+#   ...rest of your script...
+#
+# In order for the '--version' option to work, you will need to have a
+# suitably formatted comment like the one at the top of this file
+# starting with '# Written by ' and ending with '# warranty; '.
+#
+# For '-h' and '--help' to work, you will also need a one line
+# description of your script's purpose in a comment directly above the
+# '# Written by ' line, like the one at the top of this file.
+#
+# The default options also support '--debug', which will turn on shell
+# execution tracing (see the comment above debug_cmd below for another
+# use), and '--verbose' and the func_verbose function to allow your script
+# to display verbose messages only when your user has specified
+# '--verbose'.
+#
+# After sourcing this file, you can plug processing for additional
+# options by amending the variables from the 'Configuration' section
+# below, and following the instructions in the 'Option parsing'
+# section further down.
+
+## -------------- ##
+## Configuration. ##
+## -------------- ##
+
+# You should override these variables in your script after sourcing this
+# file so that they reflect the customisations you have added to the
+# option parser.
+
+# The usage line for option parsing errors and the start of '-h' and
+# '--help' output messages. You can embed shell variables for delayed
+# expansion at the time the message is displayed, but you will need to
+# quote other shell meta-characters carefully to prevent them being
+# expanded when the contents are evaled.
+usage='$progpath [OPTION]...'
+
+# Short help message in response to '-h' and '--help'.  Add to this or
+# override it after sourcing this library to reflect the full set of
+# options your script accepts.
+usage_message="\
+       --debug        enable verbose shell tracing
+   -W, --warnings=CATEGORY
+                      report the warnings falling in CATEGORY [all]
+   -v, --verbose      verbosely report processing
+       --version      print version information and exit
+   -h, --help         print short or long help message and exit
+"
+
+# Additional text appended to 'usage_message' in response to '--help'.
+long_help_message="
+Warning categories include:
+       'all'          show all warnings
+       'none'         turn off all the warnings
+       'error'        warnings are treated as fatal errors"
+
+# Help message printed before fatal option parsing errors.
+fatal_help="Try '\$progname --help' for more information."
+
+
+
+## ------------------------- ##
+## Hook function management. ##
+## ------------------------- ##
+
+# This section contains functions for adding, removing, and running hooks
+# to the main code.  A hook is just a named list of of function, that can
+# be run in order later on.
+
+# func_hookable FUNC_NAME
+# -----------------------
+# Declare that FUNC_NAME will run hooks added with
+# 'func_add_hook FUNC_NAME ...'.
+func_hookable ()
+{
+    $debug_cmd
+
+    func_append hookable_fns " $1"
+}
+
+
+# func_add_hook FUNC_NAME HOOK_FUNC
+# ---------------------------------
+# Request that FUNC_NAME call HOOK_FUNC before it returns.  FUNC_NAME must
+# first have been declared "hookable" by a call to 'func_hookable'.
+func_add_hook ()
+{
+    $debug_cmd
+
+    case " $hookable_fns " in
+      *" $1 "*) ;;
+      *) func_fatal_error "'$1' does not accept hook functions." ;;
+    esac
+
+    eval func_append ${1}_hooks '" $2"'
+}
+
+
+# func_remove_hook FUNC_NAME HOOK_FUNC
+# ------------------------------------
+# Remove HOOK_FUNC from the list of functions called by FUNC_NAME.
+func_remove_hook ()
+{
+    $debug_cmd
+
+    eval ${1}_hooks='`$ECHO "\$'$1'_hooks" |$SED "s| '$2'||"`'
+}
+
+
+# func_run_hooks FUNC_NAME [ARG]...
+# ---------------------------------
+# Run all hook functions registered to FUNC_NAME.
+# It is assumed that the list of hook functions contains nothing more
+# than a whitespace-delimited list of legal shell function names, and
+# no effort is wasted trying to catch shell meta-characters or preserve
+# whitespace.
+func_run_hooks ()
+{
+    $debug_cmd
+
+    _G_rc_run_hooks=false
+
+    case " $hookable_fns " in
+      *" $1 "*) ;;
+      *) func_fatal_error "'$1' does not support hook funcions.n" ;;
+    esac
+
+    eval _G_hook_fns=\$$1_hooks; shift
+
+    for _G_hook in $_G_hook_fns; do
+      if eval $_G_hook '"$@"'; then
+        # store returned options list back into positional
+        # parameters for next 'cmd' execution.
+        eval _G_hook_result=\$${_G_hook}_result
+        eval set dummy "$_G_hook_result"; shift
+        _G_rc_run_hooks=:
+      fi
+    done
+
+    $_G_rc_run_hooks && func_run_hooks_result=$_G_hook_result
+}
+
+
+
+## --------------- ##
+## Option parsing. ##
+## --------------- ##
+
+# In order to add your own option parsing hooks, you must accept the
+# full positional parameter list in your hook function, you may remove/edit
+# any options that you action, and then pass back the remaining unprocessed
+# options in '<hooked_function_name>_result', escaped suitably for
+# 'eval'.  In this case you also must return $EXIT_SUCCESS to let the
+# hook's caller know that it should pay attention to
+# '<hooked_function_name>_result'.  Returning $EXIT_FAILURE signalizes that
+# arguments are left untouched by the hook and therefore caller will ignore the
+# result variable.
+#
+# Like this:
+#
+#    my_options_prep ()
+#    {
+#        $debug_cmd
+#
+#        # Extend the existing usage message.
+#        usage_message=$usage_message'
+#      -s, --silent       don'\''t print informational messages
+#    '
+#        # No change in '$@' (ignored completely by this hook).  There is
+#        # no need to do the equivalent (but slower) action:
+#        # func_quote_for_eval ${1+"$@"}
+#        # my_options_prep_result=$func_quote_for_eval_result
+#        false
+#    }
+#    func_add_hook func_options_prep my_options_prep
+#
+#
+#    my_silent_option ()
+#    {
+#        $debug_cmd
+#
+#        args_changed=false
+#
+#        # Note that for efficiency, we parse as many options as we can
+#        # recognise in a loop before passing the remainder back to the
+#        # caller on the first unrecognised argument we encounter.
+#        while test $# -gt 0; do
+#          opt=$1; shift
+#          case $opt in
+#            --silent|-s) opt_silent=:
+#                         args_changed=:
+#                         ;;
+#            # Separate non-argument short options:
+#            -s*)         func_split_short_opt "$_G_opt"
+#                         set dummy "$func_split_short_opt_name" \
+#                             "-$func_split_short_opt_arg" ${1+"$@"}
+#                         shift
+#                         args_changed=:
+#                         ;;
+#            *)           # Make sure the first unrecognised option "$_G_opt"
+#                         # is added back to "$@", we could need that later
+#                         # if $args_changed is true.
+#                         set dummy "$_G_opt" ${1+"$@"}; shift; break ;;
+#          esac
+#        done
+#
+#        if $args_changed; then
+#          func_quote_for_eval ${1+"$@"}
+#          my_silent_option_result=$func_quote_for_eval_result
+#        fi
+#
+#        $args_changed
+#    }
+#    func_add_hook func_parse_options my_silent_option
+#
+#
+#    my_option_validation ()
+#    {
+#        $debug_cmd
+#
+#        $opt_silent && $opt_verbose && func_fatal_help "\
+#    '--silent' and '--verbose' options are mutually exclusive."
+#
+#        false
+#    }
+#    func_add_hook func_validate_options my_option_validation
+#
+# You'll also need to manually amend $usage_message to reflect the extra
+# options you parse.  It's preferable to append if you can, so that
+# multiple option parsing hooks can be added safely.
+
+
+# func_options_finish [ARG]...
+# ----------------------------
+# Finishing the option parse loop (call 'func_options' hooks ATM).
+func_options_finish ()
+{
+    $debug_cmd
+
+    _G_func_options_finish_exit=false
+    if func_run_hooks func_options ${1+"$@"}; then
+      func_options_finish_result=$func_run_hooks_result
+      _G_func_options_finish_exit=:
+    fi
+
+    $_G_func_options_finish_exit
+}
+
+
+# func_options [ARG]...
+# ---------------------
+# All the functions called inside func_options are hookable. See the
+# individual implementations for details.
+func_hookable func_options
+func_options ()
+{
+    $debug_cmd
+
+    _G_rc_options=false
+
+    for my_func in options_prep parse_options validate_options options_finish
+    do
+      if eval func_$my_func '${1+"$@"}'; then
+        eval _G_res_var='$'"func_${my_func}_result"
+        eval set dummy "$_G_res_var" ; shift
+        _G_rc_options=:
+      fi
+    done
+
+    # Save modified positional parameters for caller.  As a top-level
+    # options-parser function we always need to set the 'func_options_result'
+    # variable (regardless the $_G_rc_options value).
+    if $_G_rc_options; then
+      func_options_result=$_G_res_var
+    else
+      func_quote_for_eval ${1+"$@"}
+      func_options_result=$func_quote_for_eval_result
+    fi
+
+    $_G_rc_options
+}
+
+
+# func_options_prep [ARG]...
+# --------------------------
+# All initialisations required before starting the option parse loop.
+# Note that when calling hook functions, we pass through the list of
+# positional parameters.  If a hook function modifies that list, and
+# needs to propagate that back to rest of this script, then the complete
+# modified list must be put in 'func_run_hooks_result' before
+# returning $EXIT_SUCCESS (otherwise $EXIT_FAILURE is returned).
+func_hookable func_options_prep
+func_options_prep ()
+{
+    $debug_cmd
+
+    # Option defaults:
+    opt_verbose=false
+    opt_warning_types=
+
+    _G_rc_options_prep=false
+    if func_run_hooks func_options_prep ${1+"$@"}; then
+      _G_rc_options_prep=:
+      # save modified positional parameters for caller
+      func_options_prep_result=$func_run_hooks_result
+    fi
+
+    $_G_rc_options_prep
+}
+
+
+# func_parse_options [ARG]...
+# ---------------------------
+# The main option parsing loop.
+func_hookable func_parse_options
+func_parse_options ()
+{
+    $debug_cmd
+
+    func_parse_options_result=
+
+    _G_rc_parse_options=false
+    # this just eases exit handling
+    while test $# -gt 0; do
+      # Defer to hook functions for initial option parsing, so they
+      # get priority in the event of reusing an option name.
+      if func_run_hooks func_parse_options ${1+"$@"}; then
+        eval set dummy "$func_run_hooks_result"; shift
+        _G_rc_parse_options=:
+      fi
+
+      # Break out of the loop if we already parsed every option.
+      test $# -gt 0 || break
+
+      _G_match_parse_options=:
+      _G_opt=$1
+      shift
+      case $_G_opt in
+        --debug|-x)   debug_cmd='set -x'
+                      func_echo "enabling shell trace mode"
+                      $debug_cmd
+                      ;;
+
+        --no-warnings|--no-warning|--no-warn)
+                      set dummy --warnings none ${1+"$@"}
+                      shift
+		      ;;
+
+        --warnings|--warning|-W)
+                      if test $# = 0 && func_missing_arg $_G_opt; then
+                        _G_rc_parse_options=:
+                        break
+                      fi
+                      case " $warning_categories $1" in
+                        *" $1 "*)
+                          # trailing space prevents matching last $1 above
+                          func_append_uniq opt_warning_types " $1"
+                          ;;
+                        *all)
+                          opt_warning_types=$warning_categories
+                          ;;
+                        *none)
+                          opt_warning_types=none
+                          warning_func=:
+                          ;;
+                        *error)
+                          opt_warning_types=$warning_categories
+                          warning_func=func_fatal_error
+                          ;;
+                        *)
+                          func_fatal_error \
+                             "unsupported warning category: '$1'"
+                          ;;
+                      esac
+                      shift
+                      ;;
+
+        --verbose|-v) opt_verbose=: ;;
+        --version)    func_version ;;
+        -\?|-h)       func_usage ;;
+        --help)       func_help ;;
+
+	# Separate optargs to long options (plugins may need this):
+	--*=*)        func_split_equals "$_G_opt"
+	              set dummy "$func_split_equals_lhs" \
+                          "$func_split_equals_rhs" ${1+"$@"}
+                      shift
+                      ;;
+
+       # Separate optargs to short options:
+        -W*)
+                      func_split_short_opt "$_G_opt"
+                      set dummy "$func_split_short_opt_name" \
+                          "$func_split_short_opt_arg" ${1+"$@"}
+                      shift
+                      ;;
+
+        # Separate non-argument short options:
+        -\?*|-h*|-v*|-x*)
+                      func_split_short_opt "$_G_opt"
+                      set dummy "$func_split_short_opt_name" \
+                          "-$func_split_short_opt_arg" ${1+"$@"}
+                      shift
+                      ;;
+
+        --)           _G_rc_parse_options=: ; break ;;
+        -*)           func_fatal_help "unrecognised option: '$_G_opt'" ;;
+        *)            set dummy "$_G_opt" ${1+"$@"}; shift
+                      _G_match_parse_options=false
+                      break
+                      ;;
+      esac
+
+      $_G_match_parse_options && _G_rc_parse_options=:
+    done
+
+
+    if $_G_rc_parse_options; then
+      # save modified positional parameters for caller
+      func_quote_for_eval ${1+"$@"}
+      func_parse_options_result=$func_quote_for_eval_result
+    fi
+
+    $_G_rc_parse_options
+}
+
+
+# func_validate_options [ARG]...
+# ------------------------------
+# Perform any sanity checks on option settings and/or unconsumed
+# arguments.
+func_hookable func_validate_options
+func_validate_options ()
+{
+    $debug_cmd
+
+    _G_rc_validate_options=false
+
+    # Display all warnings if -W was not given.
+    test -n "$opt_warning_types" || opt_warning_types=" $warning_categories"
+
+    if func_run_hooks func_validate_options ${1+"$@"}; then
+      # save modified positional parameters for caller
+      func_validate_options_result=$func_run_hooks_result
+      _G_rc_validate_options=:
+    fi
+
+    # Bail if the options were screwed!
+    $exit_cmd $EXIT_FAILURE
+
+    $_G_rc_validate_options
+}
+
+
+
+## ----------------- ##
+## Helper functions. ##
+## ----------------- ##
+
+# This section contains the helper functions used by the rest of the
+# hookable option parser framework in ascii-betical order.
+
+
+# func_fatal_help ARG...
+# ----------------------
+# Echo program name prefixed message to standard error, followed by
+# a help hint, and exit.
+func_fatal_help ()
+{
+    $debug_cmd
+
+    eval \$ECHO \""Usage: $usage"\"
+    eval \$ECHO \""$fatal_help"\"
+    func_error ${1+"$@"}
+    exit $EXIT_FAILURE
+}
+
+
+# func_help
+# ---------
+# Echo long help message to standard output and exit.
+func_help ()
+{
+    $debug_cmd
+
+    func_usage_message
+    $ECHO "$long_help_message"
+    exit 0
+}
+
+
+# func_missing_arg ARGNAME
+# ------------------------
+# Echo program name prefixed message to standard error and set global
+# exit_cmd.
+func_missing_arg ()
+{
+    $debug_cmd
+
+    func_error "Missing argument for '$1'."
+    exit_cmd=exit
+}
+
+
+# func_split_equals STRING
+# ------------------------
+# Set func_split_equals_lhs and func_split_equals_rhs shell variables after
+# splitting STRING at the '=' sign.
+test -z "$_G_HAVE_XSI_OPS" \
+    && (eval 'x=a/b/c;
+      test 5aa/bb/cc = "${#x}${x%%/*}${x%/*}${x#*/
+
+FILE: nanohttp.c
+/*
+ * nanohttp.c: minimalist HTTP GET implementation to fetch external subsets.
+ *             focuses on size, streamability, reentrancy and portability
+ *
+ * This is clearly not a general purpose HTTP implementation
+ * If you look for one, check:
+ *         http://www.w3.org/Library/
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ */
+
+FILE: os400/dlfcn/dlfcn.c
+/**
+***     dlopen(), dlclose() dlsym(), dlerror() emulation for OS/400.
+***
+***     See Copyright for the status of this software.
+***
+***     Author: Patrick Monnerat <pm@datasphere.ch>, DATASPHERE S.A.
+**/
+
+FILE: os400/dlfcn/dlfcn.h
+/**
+***     dlopen(), dlclose() dlsym(), dlerror() emulation for OS/400.
+***
+***     See Copyright for the status of this software.
+***
+***     Author: Patrick Monnerat <pm@datasphere.ch>, DATASPHERE S.A.
+**/
+
+FILE: os400/iconv/bldcsndfa/bldcsndfa.c
+/**
+***     Build a deterministic finite automaton to associate CCSIDs with
+***             character set names.
+***
+***     Compile on OS/400 with options SYSIFCOPT(*IFSIO).
+***
+***     See Copyright for the status of this software.
+***
+***     Author: Patrick Monnerat <pm@datasphere.ch>, DATASPHERE S.A.
+**/
+
+FILE: os400/iconv/iconv.c
+/**
+***     iconv_open(), iconv(), iconv_close() wrappers for the OS/400.
+***
+***     See Copyright for the status of this software.
+***
+***     Author: Patrick Monnerat <pm@datasphere.ch>, DATASPHERE S.A.
+**/
+
+FILE: os400/iconv/iconv.h
+/**
+***     Declarations for the iconv wrappers.
+***
+***     See Copyright for the status of this software.
+***
+***     Author: Patrick Monnerat <pm@datasphere.ch>, DATASPHERE S.A.
+**/
+
+FILE: os400/libxmlmain.c
+/**
+***     QADRT/QADRTMAIN2 substitution program.
+***     This is needed because the IBM-provided QADRTMAIN2 does not
+***     properly translate arguments by default or if no locale is provided.
+***
+***     See Copyright for the status of this software.
+***
+***     Author: Patrick Monnerat <pm@datasphere.ch>, DATASPHERE S.A.
+**/
+
+FILE: os400/os400config.h.in
+/**
+***     Configuration parameters for the OS/400 implementation.
+***
+***     See Copyright for the status of this software.
+***
+***     Author: Patrick Monnerat <pm@datasphere.ch>, DATASPHERE S.A.
+**/
+
+FILE: os400/rpgsupport.c
+/**
+***     Additional procedures for ILE/RPG support.
+***
+***     See Copyright for the status of this software.
+***
+***     Author: Patrick Monnerat <pm@datasphere.ch>, DATASPHERE S.A.
+**/
+
+FILE: os400/rpgsupport.h
+/**
+***     Additional declarations for ILE/RPG support.
+***
+***     See Copyright for the status of this software.
+***
+***     Author: Patrick Monnerat <pm@datasphere.ch>, DATASPHERE S.A.
+**/
+
+FILE: os400/transcode.c
+/**
+***     Transcoding support and wrappers.
+***
+***     See Copyright for the status of this software.
+***
+***     Author: Patrick Monnerat <pm@datasphere.ch>, DATASPHERE S.A.
+**/
+
+FILE: os400/transcode.h
+/**
+***     Transcoding support declarations.
+***
+***     See Copyright for the status of this software.
+***
+***     Author: Patrick Monnerat <pm@datasphere.ch>, DATASPHERE S.A.
+**/
+
+FILE: os400/wrappers.c
+/**
+***     UTF-8/EBCDIC wrappers to system and C library procedures.
+***
+***     See Copyright for the status of this software.
+***
+***     Author: Patrick Monnerat <pm@datasphere.ch>, DATASPHERE S.A.
+**/
+
+FILE: os400/wrappers.h
+/**
+***     Replace system/C library calls by EBCDIC wrappers.
+***     This is a layer inserted between libxml2 itself and the EBCDIC
+***             environment.
+***
+***     See Copyright for the status of this software.
+***
+***     Author: Patrick Monnerat <pm@datasphere.ch>, DATASPHERE S.A.
+**/
+
+FILE: os400/xmlcatalog.cmd
+/*      See Copyright for the status of this software.                        */
+
+FILE: os400/xmlcatlgcl.c
+/**
+***     XMLCATALOG command response program.
+***
+***     See Copyright for the status of this software.
+***
+***     Author: Patrick Monnerat <pm@datasphere.ch>, DATASPHERE S.A.
+**/
+
+FILE: os400/xmllint.cmd
+/*      See Copyright for the status of this software.                        */
+
+FILE: os400/xmllintcl.c
+/**
+***     XMLLINT command response program.
+***
+***     See Copyright for the status of this software.
+***
+***     Author: Patrick Monnerat <pm@datasphere.ch>, DATASPHERE S.A.
+**/
+
+FILE: parser.c
+/*
+ * parser.c : an XML 1.0 parser, namespaces and validity support are mostly
+ *            implemented on top of the SAX interfaces
+ *
+ * References:
+ *   The XML specification:
+ *     http://www.w3.org/TR/REC-xml
+ *   Original 1.0 version:
+ *     http://www.w3.org/TR/1998/REC-xml-19980210
+ *   XML second edition working draft
+ *     http://www.w3.org/TR/2000/WD-xml-2e-20000814
+ *
+ * Okay this is a big file, the parser core is around 7000 lines, then it
+ * is followed by the progressive parser top routines, then the various
+ * high level APIs to call the parser and a few miscellaneous functions.
+ * A number of helper functions and deprecated ones have been moved to
+ * parserInternals.c to reduce this file size.
+ * As much as possible the functions are associated with their relative
+ * production in the XML specification. A few productions defining the
+ * different ranges of character are actually implanted either in
+ * parserInternals.h or parserInternals.c
+ * The DOM tree build is realized from the default SAX callbacks in
+ * the module SAX.c.
+ * The routines doing the validation checks are in valid.c and called either
+ * from the SAX callbacks or as standalone functions using a preparsed
+ * document.
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ */
+
+FILE: parserInternals.c
+/*
+ * parserInternals.c : Internal routines (and obsolete ones) needed for the
+ *                     XML and HTML parsers.
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ */
+
+FILE: pattern.c
+/*
+ * pattern.c: Implementation of selectors for nodes
+ *
+ * Reference:
+ *   http://www.w3.org/TR/2001/REC-xmlschema-1-20010502/
+ *   to some extent
+ *   http://www.w3.org/TR/1999/REC-xml-19991116
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ */
+
+FILE: python/libxml.c
+/*
+ * libxml.c: this modules implements the main part of the glue of the
+ *           libxml2 library and the Python interpreter. It provides the
+ *           entry points where an automatically generated stub is either
+ *           unpractical or would not match cleanly the Python model.
+ *
+ * If compiled with MERGED_MODULES, the entry point will be used to
+ * initialize both the libxml2 and the libxslt wrappers
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ */
+
+FILE: python/types.c
+/*
+ * types.c: converter functions between the internal representation
+ *          and the Python objects
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ */
+
+FILE: relaxng.c
+/*
+ * relaxng.c : implementation of the Relax-NG handling and validity checking
+ *
+ * See Copyright for the status of this software.
+ *
+ * Daniel Veillard <veillard@redhat.com>
+ */
+
+FILE: runsuite.c
+/*
+ * runsuite.c: C program to run libxml2 against published testsuites
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ */
+
+FILE: runtest.c
+/*
+ * runtest.c: C program to run libxml2 regression tests without
+ *            requiring make or Python, and reducing platform dependencies
+ *            to a strict minimum.
+ *
+ * To compile on Unixes:
+ * cc -o runtest `xml2-config --cflags` runtest.c `xml2-config --libs` -lpthread
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ */
+
+FILE: runxmlconf.c
+/*
+ * runxmlconf.c: C program to run XML W3C conformance testsuites
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ */
+
+FILE: schematron.c
+/*
+ * schematron.c : implementation of the Schematron schema validity checking
+ *
+ * See Copyright for the status of this software.
+ *
+ * Daniel Veillard <daniel@veillard.com>
+ */
+
+FILE: testModule.c
+/*
+ * testModule.c : a small tester program for xmlModule
+ *
+ * See Copyright for the status of this software.
+ *
+ * joelwreed@comcast.net
+ */
+
+FILE: testapi.c
+/*
+ * testapi.c: libxml2 API tester program.
+ *
+ * Automatically generated by gentest.py from libxml2-api.xml
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ */
+
+FILE: testchar.c
+/**
+ * Test the UTF-8 decoding routines
+ *
+ * author: Daniel Veillard
+ * copy: see Copyright for the status of this software.
+ */
+
+FILE: testlimits.c
+/*
+ * testlimits.c: C program to run libxml2 regression tests checking various
+ *       limits in document size. Will consume a lot of RAM and CPU cycles
+ *
+ * To compile on Unixes:
+ * cc -o testlimits `xml2-config --cflags` testlimits.c `xml2-config --libs` -lpthread
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ */
+
+FILE: testrecurse.c
+/*
+ * testrecurse.c: C program to run libxml2 regression tests checking entities
+ *            recursions
+ *
+ * To compile on Unixes:
+ * cc -o testrecurse `xml2-config --cflags` testrecurse.c `xml2-config --libs` -lpthread
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ */
+
+FILE: threads.c
+/**
+ * threads.c: set of generic threading related routines
+ *
+ * See Copyright for the status of this software.
+ *
+ * Gary Pennington <Gary.Pennington@uk.sun.com>
+ * daniel@veillard.com
+ */
+
+FILE: timsort.h
+/*
+ * The MIT License (MIT)
+ *
+ * Copyright (c) 2010-2017 Christopher Swenson.
+ * Copyright (c) 2012 Vojtech Fried.
+ * Copyright (c) 2012 Google Inc. All Rights Reserved.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
+ */
+
+FILE: tree.c
+/*
+ * tree.c : implementation of access function for an XML tree.
+ *
+ * References:
+ *   XHTML 1.0 W3C REC: http://www.w3.org/TR/2002/REC-xhtml1-20020801/
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ *
+ */
+
+/*
+ * NOTE about the CopyNode operations !
+ *
+ * They are split into external and internal parts for one
+ * tricky reason: namespaces. Doing a direct copy of a node
+ * say RPM:Copyright without changing the namespace pointer to
+ * something else can produce stale links. One way to do it is
+ * to keep a reference counter but this doesn't work as soon
+ * as one moves the element or the subtree out of the scope of
+ * the existing namespace. The actual solution seems to be to add
+ * a copy of the namespace at the top of the copied tree if
+ * not available in the subtree.
+ * Hence two functions, the public front-end call the inner ones
+ * The argument "recursive" normally indicates a recursive copy
+ * of the node with values 0 (no) and 1 (yes).  For XInclude,
+ * however, we allow a value of 2 to indicate copy properties and
+ * namespace info, but don't recurse on children.
+ */
+
+FILE: trio.c
+/*************************************************************************
+ *
+ * $Id$
+ *
+ * Copyright (C) 1998 Bjorn Reese and Daniel Stenberg.
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE. THE AUTHORS AND
+ * CONTRIBUTORS ACCEPT NO RESPONSIBILITY IN ANY CONCEIVABLE MANNER.
+ *
+ *************************************************************************
+ *
+ * A note to trio contributors:
+ *
+ * Avoid heap allocation at all costs to ensure that the trio functions
+ * are async-safe. The exceptions are the printf/fprintf functions, which
+ * uses fputc, and the asprintf functions and the <alloc> modifier, which
+ * by design are required to allocate form the heap.
+ *
+ ************************************************************************/
+
+FILE: trio.h
+/*************************************************************************
+ *
+ * $Id$
+ *
+ * Copyright (C) 1998 Bjorn Reese and Daniel Stenberg.
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE. THE AUTHORS AND
+ * CONTRIBUTORS ACCEPT NO RESPONSIBILITY IN ANY CONCEIVABLE MANNER.
+ *
+ *************************************************************************
+ *
+ * http://ctrio.sourceforge.net/
+ *
+ ************************************************************************/
+
+FILE: triodef.h
+/*************************************************************************
+ *
+ * $Id$
+ *
+ * Copyright (C) 2001 Bjorn Reese <breese@users.sourceforge.net>
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE. THE AUTHORS AND
+ * CONTRIBUTORS ACCEPT NO RESPONSIBILITY IN ANY CONCEIVABLE MANNER.
+ *
+ ************************************************************************/
+
+FILE: trionan.c
+/*************************************************************************
+ *
+ * $Id$
+ *
+ * Copyright (C) 2001 Bjorn Reese <breese@users.sourceforge.net>
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE. THE AUTHORS AND
+ * CONTRIBUTORS ACCEPT NO RESPONSIBILITY IN ANY CONCEIVABLE MANNER.
+ *
+ ************************************************************************
+ *
+ * Functions to handle special quantities in floating-point numbers
+ * (that is, NaNs and infinity). They provide the capability to detect
+ * and fabricate special quantities.
+ *
+ * Although written to be as portable as possible, it can never be
+ * guaranteed to work on all platforms, as not all hardware supports
+ * special quantities.
+ *
+ * The approach used here (approximately) is to:
+ *
+ *   1. Use C99 functionality when available.
+ *   2. Use IEEE 754 bit-patterns if possible.
+ *   3. Use platform-specific techniques.
+ *
+ ************************************************************************/
+
+FILE: trionan.h
+/*************************************************************************
+ *
+ * $Id$
+ *
+ * Copyright (C) 2001 Bjorn Reese <breese@users.sourceforge.net>
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE. THE AUTHORS AND
+ * CONTRIBUTORS ACCEPT NO RESPONSIBILITY IN ANY CONCEIVABLE MANNER.
+ *
+ ************************************************************************/
+
+FILE: triop.h
+/*************************************************************************
+ *
+ * $Id$
+ *
+ * Copyright (C) 2000 Bjorn Reese and Daniel Stenberg.
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE. THE AUTHORS AND
+ * CONTRIBUTORS ACCEPT NO RESPONSIBILITY IN ANY CONCEIVABLE MANNER.
+ *
+ ************************************************************************
+ *
+ * Private functions, types, etc. used for callback functions.
+ *
+ * The ref pointer is an opaque type and should remain as such.
+ * Private data must only be accessible through the getter and
+ * setter functions.
+ *
+ ************************************************************************/
+
+FILE: triostr.c
+/*************************************************************************
+ *
+ * $Id$
+ *
+ * Copyright (C) 2001 Bjorn Reese and Daniel Stenberg.
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE. THE AUTHORS AND
+ * CONTRIBUTORS ACCEPT NO RESPONSIBILITY IN ANY CONCEIVABLE MANNER.
+ *
+ ************************************************************************/
+
+FILE: triostr.h
+/*************************************************************************
+ *
+ * $Id$
+ *
+ * Copyright (C) 2001 Bjorn Reese and Daniel Stenberg.
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE. THE AUTHORS AND
+ * CONTRIBUTORS ACCEPT NO RESPONSIBILITY IN ANY CONCEIVABLE MANNER.
+ *
+ ************************************************************************/
+
+FILE: uri.c
+/**
+ * uri.c: set of generic URI related routines
+ *
+ * Reference: RFCs 3986, 2732 and 2373
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ */
+
+FILE: valid.c
+/*
+ * valid.c : part of the code use to do the DTD handling and the validity
+ *           checking
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ */
+
+FILE: xinclude.c
+/*
+ * xinclude.c : Code to implement XInclude processing
+ *
+ * World Wide Web Consortium W3C Last Call Working Draft 10 November 2003
+ * http://www.w3.org/TR/2003/WD-xinclude-20031110
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ */
+
+FILE: xlink.c
+/*
+ * xlink.c : implementation of the hyperlinks detection module
+ *           This version supports both XML XLinks and HTML simple links
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ */
+
+FILE: xmlIO.c
+/*
+ * xmlIO.c : implementation of the I/O interfaces used by the parser
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ *
+ * 14 Nov 2000 ht - for VMS, truncated name of long functions to under 32 char
+ */
+
+FILE: xmlcatalog.c
+/*
+ * xmlcatalog.c : a small utility program to handle XML catalogs
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ */
+
+FILE: xmllint.c
+/*
+ * xmllint.c : a small tester program for XML input.
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ */
+
+FILE: xmlmodule.c
+/*
+ * xmlmodule.c : basic API for dynamic module loading added 2.6.17
+ *
+ * See Copyright for the status of this software.
+ *
+ * joelwreed@comcast.net
+ *
+ * http://www.fortran-2000.com/ArnaudRecipes/sharedlib.html
+ */
+
+FILE: xmlreader.c
+/*
+ * xmlreader.c: implements the xmlTextReader streaming node API
+ *
+ * NOTE:
+ *   XmlTextReader.Normalization Property won't be supported, since
+ *     it makes the parser non compliant to the XML recommendation
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ */
+
+FILE: xmlregexp.c
+/*
+ * regexp.c: generic and extensible Regular Expression engine
+ *
+ * Basically designed with the purpose of compiling regexps for
+ * the variety of validation/schemas mechanisms now available in
+ * XML related specifications these include:
+ *    - XML-1.0 DTD validation
+ *    - XML Schemas structure part 1
+ *    - XML Schemas Datatypes part 2 especially Appendix F
+ *    - RELAX-NG/TREX i.e. the counter proposal
+ *
+ * See Copyright for the status of this software.
+ *
+ * Daniel Veillard <veillard@redhat.com>
+ */
+
+FILE: xmlsave.c
+/*
+ * xmlsave.c: Implementation of the document serializer
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ */
+
+FILE: xmlschemas.c
+/*
+ * schemas.c : implementation of the XML Schema handling and
+ *             schema validity checking
+ *
+ * See Copyright for the status of this software.
+ *
+ * Daniel Veillard <veillard@redhat.com>
+ */
+
+FILE: xmlschemastypes.c
+/*
+ * schemastypes.c : implementation of the XML Schema Datatypes
+ *             definition and validity checking
+ *
+ * See Copyright for the status of this software.
+ *
+ * Daniel Veillard <veillard@redhat.com>
+ */
+
+FILE: xmlstring.c
+/*
+ * string.c : an XML string utilities module
+ *
+ * This module provides various utility functions for manipulating
+ * the xmlChar* type. All functions named xmlStr* have been moved here
+ * from the parser.c file (their original home).
+ *
+ * See Copyright for the status of this software.
+ *
+ * UTF8 string routines from:
+ * William Brack <wbrack@mmm.com.hk>
+ *
+ * daniel@veillard.com
+ */
+
+FILE: xpath.c
+/*
+ * xpath.c: XML Path Language implementation
+ *          XPath is a language for addressing parts of an XML document,
+ *          designed to be used by both XSLT and XPointer
+ *
+ * Reference: W3C Recommendation 16 November 1999
+ *     http://www.w3.org/TR/1999/REC-xpath-19991116
+ * Public reference:
+ *     http://www.w3.org/TR/xpath
+ *
+ * See Copyright for the status of this software
+ *
+ * Author: daniel@veillard.com
+ *
+ */
+
+FILE: xpointer.c
+/*
+ * xpointer.c : Code to handle XML Pointer
+ *
+ * Base implementation was made accordingly to
+ * W3C Candidate Recommendation 7 June 2000
+ * http://www.w3.org/TR/2000/CR-xptr-20000607
+ *
+ * Added support for the element() scheme described in:
+ * W3C Proposed Recommendation 13 November 2002
+ * http://www.w3.org/TR/2002/PR-xptr-element-20021113/
+ *
+ * See Copyright for the status of this software.
+ *
+ * daniel@veillard.com
+ */
+
+FILE: xzlib.c
+/**
+ * xzlib.c: front end for the transparent support of lzma compression
+ *          at the I/O layer, based on an example file from lzma project
+ *
+ * See Copyright for the status of this software.
+ *
+ * Anders F Bjorklund <afb@users.sourceforge.net>
+ */

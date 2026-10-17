@@ -1,0 +1,683 @@
+--- a/src/freedreno/common/freedreno_dev_info.h
++++ b/src/freedreno/common/freedreno_dev_info.h
+@@ -488,6 +488,8 @@
+ 
+       uint32_t max_texel_buffer_range_elements;
+       uint32_t max_storage_buffer_range_bytes;
++      /* Whether SUBPASS_FENCE implicitly waits for resolve events. */
++      bool subpass_fence_cleans_resolve;
+    } props;
+ };
+ 
+--- a/src/freedreno/common/freedreno_devices.py
++++ b/src/freedreno/common/freedreno_devices.py
+@@ -888,6 +888,7 @@
+         max_draw_states = 64,
+         has_64b_image_atomics = True,
+         has_implicit_fragface_fragcoord_ij_linear = True,
++        subpass_fence_cleans_resolve = True,
+     )
+ 
+ a730_magic_regs = dict(
+--- a/src/freedreno/vulkan/tu_clear_blit.cc
++++ b/src/freedreno/vulkan/tu_clear_blit.cc
+@@ -2201,8 +2201,8 @@
+       return;
+ 
+    if ((dst_va & 63) || (size & 63)) {
+-      tu_flush_for_access(&cmd->state.cache, TU_ACCESS_NONE,
+-                          TU_ACCESS_CCU_COLOR_INCOHERENT_WRITE);
++      tu_flush_for_access<CHIP>(&cmd->state.cache, TU_ACCESS_NONE,
++                                TU_ACCESS_CCU_COLOR_INCOHERENT_WRITE);
+       /* Wait for invalidations to land. */
+       cmd->state.cache.flush_bits |= TU_CMD_FLAG_WAIT_FOR_IDLE;
+       tu_emit_cache_flush<CHIP>(cmd);
+@@ -2216,9 +2216,9 @@
+                                     bool unaligned_store)
+ {
+    if (unaligned_store) {
+-      tu_flush_for_access(&cmd->state.cache,
+-                          TU_ACCESS_CCU_COLOR_INCOHERENT_WRITE,
+-                          TU_ACCESS_NONE);
++      tu_flush_for_access<CHIP>(&cmd->state.cache,
++                                TU_ACCESS_CCU_COLOR_INCOHERENT_WRITE,
++                                TU_ACCESS_NONE);
+    }
+ }
+ 
+@@ -4698,7 +4698,8 @@
+       }
+    }
+ 
+-   tu_flush_for_access(&cmd->state.renderpass_cache, TU_ACCESS_BLIT_WRITE_GMEM, TU_ACCESS_NONE);
++   tu_flush_for_access<CHIP>(&cmd->state.renderpass_cache,
++                             TU_ACCESS_BLIT_WRITE_GMEM, TU_ACCESS_NONE);
+ 
+    trace_end_gmem_clear(&cmd->rp_trace, cs);
+ }
+@@ -5202,8 +5203,8 @@
+       }
+    }
+ 
+-   tu_flush_for_access(&cmd->state.renderpass_cache,
+-                       TU_ACCESS_BLIT_WRITE_GMEM, TU_ACCESS_NONE);
++   TU_CALLX(cmd->device, tu_flush_for_access)(
++      &cmd->state.renderpass_cache, TU_ACCESS_BLIT_WRITE_GMEM, TU_ACCESS_NONE);
+ 
+    trace_end_generic_clear(&cmd->rp_trace, cs);
+ }
+@@ -5400,8 +5401,8 @@
+       event_blit_run<CHIP>(cmd, cs, attachment, fdl_view, i, separate_stencil);
+    }
+ 
+-   tu_flush_for_access(&cmd->state.cache, TU_ACCESS_BLIT_WRITE_GMEM,
+-                       TU_ACCESS_NONE);
++   tu_flush_for_access<CHIP>(&cmd->state.cache, TU_ACCESS_BLIT_WRITE_GMEM,
++                             TU_ACCESS_NONE);
+ }
+ 
+ static bool
+--- a/src/freedreno/vulkan/tu_cmd_buffer.cc
++++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
+@@ -390,7 +390,28 @@
+             .gfx_bindless = CHIP == A6XX ? 0x1f : 0xff,
+       ));
+    }
+-   if (CHIP >= A7XX && flushes & TU_CMD_FLAG_BLIT_CACHE_CLEAN)
++
++   /* SUBPASS_SLICE_FENCE is a weaker version of:
++    * - CACHE_INVALIDATE (only invalidate UCHE GMEM aperture)
++    * - WAIT_FOR_IDLE (only make FS executions within a slice wait for RB done)
++    * We split the functionality in two flags. For each flag, if we already
++    * needed the stronger flush/wait, we can ignore it.
++    */
++   bool emit_cache_invalidate_gmem =
++      (flushes & TU_CMD_FLAG_CACHE_INVALIDATE_GMEM) &&
++      !(flushes & TU_CMD_FLAG_CACHE_INVALIDATE);
++   bool emit_subpass_slice_wait =
++       (flushes & TU_CMD_FLAG_SUBPASS_SLICE_FENCE) &&
++        !(flushes & TU_CMD_FLAG_WAIT_FOR_IDLE);
++   bool emit_subpass_slice_fence =
++      emit_cache_invalidate_gmem || emit_subpass_slice_wait;
++
++   if (CHIP >= A7XX && (flushes & TU_CMD_FLAG_BLIT_CACHE_CLEAN) &&
++       /* On newer HW SUBPASS_FENCE implicitly waits for resolve events to
++        * finish, so we don't need this if we're emitting it.
++        */
++       (!emit_subpass_slice_fence ||
++         !cmd_buffer->device->physical_device->info->props.subpass_fence_cleans_resolve))
+       /* On A7XX, blit cache flushes are required to ensure blit writes are visible
+        * via UCHE. This isn't necessary on A6XX, all writes should be visible implictly.
+        */
+@@ -409,6 +430,26 @@
+       tu_emit_rt_workaround<CHIP>(cmd_buffer, cs);
+    if (flushes & TU_CMD_FLAG_WAIT_MEM_WRITES)
+       tu_cs_emit_pkt7(cs, CP_WAIT_MEM_WRITES, 0);
++   if (emit_subpass_slice_fence) {
++      /* Emit the stronger flushes in sysmem mode. We need this from
++       * experimentation.
++       */
++      tu_cond_exec_start(cs, CP_COND_REG_EXEC_0_MODE(RENDER_MODE) |
++                             CP_COND_REG_EXEC_0_SYSMEM);
++      if (emit_cache_invalidate_gmem)
++         tu_emit_event_write<CHIP>(cmd_buffer, cs, FD_CACHE_INVALIDATE);
++      if (emit_subpass_slice_wait)
++         tu_cs_emit_wfi(cs);
++      tu_cond_exec_end(cs);
++
++      if (CHIP >= A8XX) {
++         tu_emit_event_write<CHIP>(cmd_buffer, cs, FD_LABEL);
++         tu_emit_event_write<CHIP>(cmd_buffer, cs, FD_SUBPASS_SLICE_FENCE);
++         tu_emit_event_write<CHIP>(cmd_buffer, cs, FD_LABEL);
++      } else {
++         tu_emit_event_write<CHIP>(cmd_buffer, cs, FD_SUBPASS_FENCE);
++      }
++   }
+    if (flushes & TU_CMD_FLAG_WAIT_FOR_IDLE)
+       tu_cs_emit_wfi(cs);
+    if (flushes & TU_CMD_FLAG_WAIT_FOR_ME)
+@@ -3953,6 +3994,19 @@
+    const struct tu_vsc_config *vsc = tu_vsc_config(cmd, tiling);
+    const struct tu_image_view *fdm = NULL;
+ 
++   /* For dynamic rendering, if we have read-only input attachments that are
++    * read at any point after an INPUT_ATTACHMENT_READ barrier, we may have to
++    * emit a CACHE_INVALIDATE before the whole render pass. This is because
++    * inside the render pass we will only emit a SUBPASS_FENCE, and unlike
++    * with classic renderpasses, we don't know whether there are read-only
++    * input attachments when emitting the barrier.
++    */
++   if (cmd->state.rp.read_only_input_attachments &&
++       cmd->state.rp.input_attachment_read_barrier) {
++      tu_flush_for_access<CHIP>(&cmd->state.cache, TU_ACCESS_NONE,
++                                TU_ACCESS_UCHE_READ);
++   }
++
+    /* Preamble save/restore for BINs doesn't handle PC_TESS_BASE, so we
+     * assume that PC_TESS_BASE is invalid after any GMEM pass.
+     */
+@@ -5827,6 +5881,7 @@
+    }
+ }
+ 
++template <chip CHIP>
+ void
+ tu_flush_for_access(struct tu_cache_state *cache,
+                     enum tu_cmd_access_mask src_mask,
+@@ -5913,6 +5968,18 @@
+     */
+    if (dst_mask & TU_ACCESS_CCHE_READ) {
+       flush_bits |= TU_CMD_FLAG_CCHE_INVALIDATE;
++   }
++
++   if (dst_mask & TU_ACCESS_UCHE_READ_GMEM) {
++      /* On a7xx+, use SUBPASS_FENCE (SUBPASS_SLICE_FENCE on a8xx) which
++       * guarantees accesses for GMEM accesses through UCHE instead of
++       * invalidating all of UCHE.
++       */
++      if (CHIP >= A7XX) {
++         flush_bits |= TU_CMD_FLAG_CACHE_INVALIDATE_GMEM;
++      } else {
++         flush_bits |= TU_CMD_FLAG_CACHE_INVALIDATE;
++      }
+    }
+ 
+    /* The blit cache is a special case dependency between CP_EVENT_WRITE::BLIT
+@@ -5944,6 +6011,7 @@
+    cache->flush_bits |= flush_bits;
+    cache->pending_flush_bits &= ~flush_bits;
+ }
++TU_GENX(tu_flush_for_access);
+ 
+ /* When translating Vulkan access flags to which cache is accessed
+  * (CCU/UCHE/sysmem), we should take into account both the access flags and
+@@ -6037,7 +6105,6 @@
+                        VK_ACCESS_2_INDEX_READ_BIT |
+                        VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT |
+                        VK_ACCESS_2_UNIFORM_READ_BIT |
+-                       VK_ACCESS_2_INPUT_ATTACHMENT_READ_BIT |
+                        VK_ACCESS_2_SHADER_READ_BIT |
+                        VK_ACCESS_2_SHADER_SAMPLED_READ_BIT |
+                        VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
+@@ -6076,8 +6143,6 @@
+                        VK_ACCESS_2_INPUT_ATTACHMENT_READ_BIT,
+                        SHADER_STAGES)) {
+        mask |= TU_ACCESS_UCHE_READ_GMEM;
+-       if (sparse_aliasing)
+-          mask |= TU_ACCESS_UCHE_INCOHERENT_READ;
+    }
+ 
+    if (gfx_read_access(flags, stages,
+@@ -6316,7 +6381,8 @@
+ template <chip CHIP>
+ static void
+ tu_flush_for_stage(struct tu_cache_state *cache,
+-                   enum tu_stage src_stage, enum tu_stage dst_stage)
++                   enum tu_stage src_stage, enum tu_stage dst_stage,
++                   bool by_region)
+ {
+    /* Even if the source is the host or CP, the destination access could
+     * generate invalidates that we have to wait to complete.
+@@ -6326,8 +6392,8 @@
+       src_stage = TU_STAGE_BR;
+ 
+    if (src_stage >= dst_stage) {
+-      cache->flush_bits |= TU_CMD_FLAG_WAIT_FOR_IDLE;
+       if (dst_stage <= TU_STAGE_BV) {
++         cache->flush_bits |= TU_CMD_FLAG_WAIT_FOR_IDLE;
+          cache->flush_bits |= TU_CMD_FLAG_WAIT_FOR_BR;
+ 
+          /* Extending on the comment in vk2tu_single_stage(), up to a8xx,
+@@ -6343,6 +6409,11 @@
+             else
+                cache->pending_flush_bits |= TU_CMD_FLAG_WAIT_FOR_ME;
+          }
++      } else {
++         if (CHIP >= A7XX && by_region)
++            cache->flush_bits |= TU_CMD_FLAG_SUBPASS_SLICE_FENCE;
++         else
++            cache->flush_bits |= TU_CMD_FLAG_WAIT_FOR_IDLE;
+       }
+    }
+ }
+@@ -6361,6 +6432,8 @@
+    dst->lrz_disable_for_next_rp |= src->lrz_disable_for_next_rp;
+    dst->draw_cs_writes_to_cond_pred |= src->draw_cs_writes_to_cond_pred;
+    dst->shared_viewport |= src->shared_viewport;
++   dst->read_only_input_attachments |= src->read_only_input_attachments;
++   dst->input_attachment_read_barrier |= src->input_attachment_read_barrier;
+ 
+    dst->drawcall_bandwidth_per_sample_sum +=
+       src->drawcall_bandwidth_per_sample_sum;
+@@ -6789,11 +6862,22 @@
+    if (barrier->incoherent_ccu_depth)
+       src_flags |= TU_ACCESS_CCU_DEPTH_INCOHERENT_WRITE;
+ 
+-   tu_flush_for_access(cache, src_flags, dst_flags);
++   /* If there may be accesses to input attachments not in GMEM, expand the
++    * invalidate to all of UCHE.
++    */
++   if (barrier->read_only_input_attachments &&
++       (dst_flags & TU_ACCESS_UCHE_READ_GMEM)) {
++      if (cmd_buffer->device->vk.enabled_features.sparseResidencyAliased)
++         dst_flags |= TU_ACCESS_UCHE_INCOHERENT_READ;
++      else
++         dst_flags |= TU_ACCESS_UCHE_READ;
++   }
++
++   tu_flush_for_access<CHIP>(cache, src_flags, dst_flags);
+ 
+    enum tu_stage src_stage = vk2tu_src_stage(cmd_buffer->device, src_stage_vk);
+    enum tu_stage dst_stage = vk2tu_dst_stage(cmd_buffer->device, dst_stage_vk);
+-   tu_flush_for_stage<CHIP>(cache, src_stage, dst_stage);
++   tu_flush_for_stage<CHIP>(cache, src_stage, dst_stage, !barrier->non_fb_local);
+ }
+ 
+ template <chip CHIP>
+@@ -7159,6 +7243,22 @@
+    }
+ }
+ 
++/* Sometimes, due to feedback loops, input attachments may read the result of
++ * clears or resolve events without any intervening draw that would otherwise
++ * require a pipeline barrier/dependency. When this happens we have to
++ * invalidate ourselves.
++ */
++template <chip CHIP>
++static void
++tu_feedback_invalidate(struct tu_cmd_buffer *cmd)
++{
++   tu_flush_for_access<CHIP>(&cmd->state.renderpass_cache,
++                             TU_ACCESS_BLIT_WRITE_GMEM,
++                             TU_ACCESS_UCHE_READ_GMEM);
++   tu_flush_for_stage<CHIP>(&cmd->state.renderpass_cache,
++                            TU_STAGE_BR, TU_STAGE_BR, true);
++}
++
+ template <chip CHIP>
+ VKAPI_ATTR void VKAPI_CALL
+ tu_CmdBeginRenderPass2(VkCommandBuffer commandBuffer,
+@@ -7247,9 +7347,7 @@
+    cmd->state.renderpass_cache.flush_bits = 0;
+ 
+    if (pass->subpasses[0].feedback_invalidate) {
+-      cmd->state.renderpass_cache.flush_bits |=
+-         TU_CMD_FLAG_CACHE_INVALIDATE | TU_CMD_FLAG_BLIT_CACHE_CLEAN |
+-         TU_CMD_FLAG_WAIT_FOR_IDLE;
++      tu_feedback_invalidate<CHIP>(cmd);
+    }
+ 
+    tu_lrz_begin_renderpass<CHIP>(cmd);
+@@ -7297,8 +7395,8 @@
+     */
+    if (cmd->device->physical_device->info->chip == 6) {
+       struct tu_cache_state *cache = &cmd->state.renderpass_cache;
+-      tu_flush_for_access(cache, TU_ACCESS_CCU_COLOR_INCOHERENT_WRITE,
+-                          TU_ACCESS_CCU_COLOR_INCOHERENT_WRITE);
++      tu_flush_for_access<CHIP>(cache, TU_ACCESS_CCU_COLOR_INCOHERENT_WRITE,
++                                TU_ACCESS_CCU_COLOR_INCOHERENT_WRITE);
+       cache->flush_bits |= TU_CMD_FLAG_WAIT_FOR_IDLE;
+    }
+ }
+@@ -7705,9 +7803,7 @@
+    tu_subpass_barrier<CHIP>(cmd, &cmd->state.subpass->start_barrier, false);
+ 
+    if (cmd->state.subpass->feedback_invalidate) {
+-      cmd->state.renderpass_cache.flush_bits |=
+-         TU_CMD_FLAG_CACHE_INVALIDATE | TU_CMD_FLAG_BLIT_CACHE_CLEAN |
+-         TU_CMD_FLAG_WAIT_FOR_IDLE;
++      tu_feedback_invalidate<CHIP>(cmd);
+    }
+ 
+    tu_fill_render_pass_state(&cmd->state.vk_rp,
+@@ -8599,10 +8695,14 @@
+       tu6_emit_fs_params(cmd);
+ }
+ 
++template<chip CHIP>
+ static void
+ tu_flush_dynamic_input_attachments(struct tu_cmd_buffer *cmd)
+ {
+    struct tu_shader *fs = cmd->state.shaders[MESA_SHADER_FRAGMENT];
++
++   if (fs->fs.read_only_input_attachments)
++      cmd->state.rp.read_only_input_attachments = true;
+ 
+    if (!fs->fs.dynamic_input_attachments_used)
+       return;
+@@ -8613,9 +8713,7 @@
+     * but for dynamic renderpasses.
+     */
+    if (!cmd->state.blit_cache_cleaned) {
+-      cmd->state.renderpass_cache.flush_bits |=
+-         TU_CMD_FLAG_CACHE_INVALIDATE | TU_CMD_FLAG_BLIT_CACHE_CLEAN |
+-         TU_CMD_FLAG_WAIT_FOR_IDLE;
++      tu_feedback_invalidate<CHIP>(cmd);
+    }
+ }
+ 
+@@ -8674,7 +8772,7 @@
+       rp->drawcall_bandwidth_per_sample_sum += stencil_bandwidth * 2;
+ 
+    if (cmd->state.dirty & TU_CMD_DIRTY_FS)
+-      tu_flush_dynamic_input_attachments(cmd);
++      tu_flush_dynamic_input_attachments<CHIP>(cmd);
+ 
+    tu_emit_cache_flush_renderpass<CHIP>(cmd);
+ 
+@@ -10263,12 +10361,13 @@
+       }
+    }
+ 
++   bool by_region = false;
+    if (cmd->state.pass) {
+-      const VkPipelineStageFlags framebuffer_space_stages =
+-         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+-         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+-         VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+-         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
++      const VkPipelineStageFlags2 framebuffer_space_stages =
++         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT |
++         VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
++         VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT |
++         VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+ 
+       /* We cannot have non-by-region "fb-space to fb-space" barriers.
+        *
+@@ -10294,11 +10393,24 @@
+           (dstStage & ~framebuffer_space_stages)) {
+          cmd->state.rp.disable_gmem = true;
+          cmd->state.rp.gmem_disable_reason = "Non-framebuffer-space barrier";
++         by_region = false;
++      } else {
++         by_region = true;
+       }
+    }
+ 
+    struct tu_cache_state *cache =
+-      cmd->state.pass  ? &cmd->state.renderpass_cache : &cmd->state.cache;
++      cmd->state.pass ? &cmd->state.renderpass_cache : &cmd->state.cache;
++
++   /* Assume that pipeline barriers outside of the renderpass that use
++    * INPUT_ATTACHMENT_READ_BIT refer to read-only input attachments.
++    */
++   if (!cmd->state.pass && (dst_flags & TU_ACCESS_UCHE_READ_GMEM)) {
++      if (cmd->device->vk.enabled_features.sparseResidencyAliased)
++         dst_flags |= TU_ACCESS_UCHE_INCOHERENT_READ;
++      else
++         dst_flags |= TU_ACCESS_UCHE_READ;
++   }
+ 
+    /* a750 has a HW bug where writing a UBWC compressed image with a compute
+     * shader followed by reading it as a texture (or readonly image) requires
+@@ -10329,12 +10441,16 @@
+       cache->pending_flush_bits &= ~TU_CMD_FLAG_CACHE_CLEAN;
+    }
+ 
+-   tu_flush_for_access(cache, src_flags, dst_flags);
++   if (cmd->state.pass && (dst_flags & TU_ACCESS_UCHE_READ_GMEM))
++      cmd->state.rp.input_attachment_read_barrier = true;
++
++   TU_CALLX(cmd->device, tu_flush_for_access)(cache, src_flags, dst_flags);
+ 
+    if (!no_sync) {
+       enum tu_stage src_stage = vk2tu_src_stage(cmd->device, srcStage);
+       enum tu_stage dst_stage = vk2tu_dst_stage(cmd->device, dstStage);
+-      TU_CALLX(cmd->device, tu_flush_for_stage)(cache, src_stage, dst_stage);
++      TU_CALLX(cmd->device, tu_flush_for_stage)(cache, src_stage, dst_stage,
++                                                by_region);
+    }
+ }
+ 
+@@ -10530,7 +10646,7 @@
+     * Flush CCU in order to make the results of previous transfer
+     * operation visible to CP.
+     */
+-   tu_flush_for_access(cache, TU_ACCESS_NONE, TU_ACCESS_SYSMEM_WRITE);
++   tu_flush_for_access<CHIP>(cache, TU_ACCESS_NONE, TU_ACCESS_SYSMEM_WRITE);
+ 
+    /* Flags that only require a top-of-pipe event. DrawIndirect parameters are
+     * read by the CP, so the draw indirect stage counts as top-of-pipe too.
+@@ -10578,7 +10694,7 @@
+    }
+ 
+    /* Make sure the result of this write is visible to others. */
+-   tu_flush_for_access(cache, TU_ACCESS_CP_WRITE, TU_ACCESS_NONE);
++   tu_flush_for_access<CHIP>(cache, TU_ACCESS_CP_WRITE, TU_ACCESS_NONE);
+ }
+ TU_GENX(tu_CmdWriteBufferMarker2AMD);
+ 
+@@ -10604,5 +10720,6 @@
+    VK_FROM_HANDLE(tu_cmd_buffer, cmd, commandBuffer);
+ 
+    struct tu_cache_state *cache = &cmd->state.cache;
+-   tu_flush_for_access(cache, TU_ACCESS_CP_WRITE, (enum tu_cmd_access_mask)0);
+-}
++   TU_CALLX(cmd->device, tu_flush_for_access)(cache, TU_ACCESS_CP_WRITE,
++                                              (enum tu_cmd_access_mask)0);
++}
+--- a/src/freedreno/vulkan/tu_cmd_buffer.h
++++ b/src/freedreno/vulkan/tu_cmd_buffer.h
+@@ -239,6 +239,8 @@
+    TU_CMD_FLAG_BLIT_CACHE_CLEAN = 1 << 11,
+    TU_CMD_FLAG_RTU_INVALIDATE = 1 << 12,
+    TU_CMD_FLAG_WAIT_FOR_BR = 1 << 13,
++   TU_CMD_FLAG_CACHE_INVALIDATE_GMEM = 1 << 14,
++   TU_CMD_FLAG_SUBPASS_SLICE_FENCE = 1 << 15,
+ 
+    TU_CMD_FLAG_ALL_CLEAN =
+       TU_CMD_FLAG_CCU_CLEAN_DEPTH |
+@@ -253,6 +255,7 @@
+       TU_CMD_FLAG_CCU_INVALIDATE_DEPTH |
+       TU_CMD_FLAG_CCU_INVALIDATE_COLOR |
+       TU_CMD_FLAG_CACHE_INVALIDATE |
++      TU_CMD_FLAG_CACHE_INVALIDATE_GMEM |
+       TU_CMD_FLAG_BINDLESS_DESCRIPTOR_INVALIDATE |
+       TU_CMD_FLAG_CCHE_INVALIDATE |
+       /* Treat CP_WAIT_FOR_ME as a "cache" that needs to be invalidated when a
+@@ -326,6 +329,16 @@
+ 
+    /* Track whether conditional predicate for COND_REG_EXEC is changed in draw_cs */
+    bool draw_cs_writes_to_cond_pred;
++
++   /* Track whether there has been a pipeline barrier in the subpass with an
++    * INPUT_ATTACHMENT_READ destination access.
++    */
++   bool input_attachment_read_barrier;
++
++   /* Track whether any FS have used dynamic rendering with read-only input
++    * attachments.
++    */
++   bool read_only_input_attachments;
+ 
+    uint32_t drawcall_count;
+ 
+@@ -850,6 +863,7 @@
+                     struct tu_cs *cs,
+                     enum fd_gpu_event event);
+ 
++template <chip CHIP>
+ void
+ tu_flush_for_access(struct tu_cache_state *cache,
+                     enum tu_cmd_access_mask src_mask,
+--- a/src/freedreno/vulkan/tu_pass.cc
++++ b/src/freedreno/vulkan/tu_pass.cc
+@@ -57,6 +57,11 @@
+          dst_access_mask2 = access3->dstAccessMask3;
+       }
+    }
++
++   /* Dependencies with an EXTERNAL destination need a full WFI, but others
++    * don't unless there's a non-framebuffer-local dependency.
++    */
++   bool non_fb_local = dst == VK_SUBPASS_EXTERNAL;
+ 
+    /* We can conceptually break down the process of rewriting a sysmem
+     * renderpass into a gmem one into two parts:
+@@ -82,13 +87,16 @@
+     */
+ 
+    if (!vk_subpass_dependency_is_fb_local(dep, src_stage_mask, dst_stage_mask)) {
++      non_fb_local = false;
+       perf_debug((struct tu_device *)pass->base.device, "Disabling gmem rendering due to invalid subpass dependency");
+       for (int i = 0; i < ARRAY_SIZE(pass->gmem_pixels); i++)
+          pass->gmem_pixels[i] = 0;
+    }
+ 
+    struct tu_subpass_barrier *dst_barrier;
+-   if (dst == VK_SUBPASS_EXTERNAL) {
++   if (src == VK_SUBPASS_EXTERNAL) {
++      dst_barrier = &pass->subpasses[0].start_barrier;
++   } else if (dst == VK_SUBPASS_EXTERNAL) {
+       dst_barrier = &pass->end_barrier;
+    } else {
+       dst_barrier = &pass->subpasses[dst].start_barrier;
+@@ -100,6 +108,25 @@
+    dst_barrier->dst_access_mask |= dst_access_mask;
+    dst_barrier->src_access_mask2 |= src_access_mask2;
+    dst_barrier->dst_access_mask2 |= dst_access_mask2;
++   dst_barrier->non_fb_local |= non_fb_local;
++
++   /* Check if INPUT_ATTACHMENT_READ_BIT in the barrier could refer to a
++    * read-only input attachment, i.e. an input attachment which does not come
++    * from GMEM.
++    */
++   if (dst != VK_SUBPASS_EXTERNAL) {
++      for (unsigned i = dst; i < pass->subpass_count; i++) {
++         const struct tu_subpass *subpass = &pass->subpasses[i];
++         for (unsigned j = 0; j < subpass->input_count; j++) {
++            if (!subpass->input_attachments[j].patch_input_gmem) {
++               dst_barrier->read_only_input_attachments = true;
++               break;
++            }
++         }
++      }
++   } else {
++      dst_barrier->read_only_input_attachments = true;
++   }
+ }
+ 
+ /* We currently only care about undefined layouts, because we have to
+--- a/src/freedreno/vulkan/tu_pass.h
++++ b/src/freedreno/vulkan/tu_pass.h
+@@ -32,6 +32,8 @@
+    VkAccessFlags2 dst_access_mask;
+    VkAccessFlags3KHR dst_access_mask2;
+    bool incoherent_ccu_color, incoherent_ccu_depth;
++   bool non_fb_local;
++   bool read_only_input_attachments;
+ };
+ 
+ struct tu_subpass_attachment
+--- a/src/freedreno/vulkan/tu_query_pool.cc
++++ b/src/freedreno/vulkan/tu_query_pool.cc
+@@ -884,6 +884,9 @@
+                               result_count /* offset */, flags);
+       }
+    }
++
++   /* Make sure the result of this copy is visible to others. */
++   tu_flush_for_access<CHIP>(&cmdbuf->state.cache, TU_ACCESS_CP_WRITE, TU_ACCESS_NONE);
+ }
+ 
+ template <chip CHIP>
+--- a/src/freedreno/vulkan/tu_shader.cc
++++ b/src/freedreno/vulkan/tu_shader.cc
+@@ -3629,6 +3629,10 @@
+       shader->fs.max_fdm_layers = key->max_fdm_layers;
+    }
+ 
++   if (nir->info.stage == MESA_SHADER_FRAGMENT &&
++       key->read_only_input_attachments)
++      shader->fs.read_only_input_attachments = true;
++
+    for (unsigned i = 0; i < layout->num_sets; i++) {
+       if (layout->set[i].layout) {
+          shader->dynamic_descriptor_sizes[i] =
+--- a/src/freedreno/vulkan/tu_shader.h
++++ b/src/freedreno/vulkan/tu_shader.h
+@@ -117,6 +117,12 @@
+          /* If per_layer_viewport is true, the maximum number of layers written to.
+           */
+          uint8_t max_fdm_layers;
++
++         /* Whether there are read-only input attachments, i.e. input
++          * attachments that are not patched to read from GMEM. Only used for
++          * dynamic rendering.
++          */
++         bool read_only_input_attachments;
+       } fs;
+    };
+ };
+--- a/src/freedreno/common/freedreno_gpu_event.h
++++ b/src/freedreno/common/freedreno_gpu_event.h
+@@ -96,7 +96,40 @@ constexpr inline struct fd_gpu_event_info fd_gpu_events<chip_range(CHIP == A6XX)
+ };
+ 
+ template <chip CHIP>
+-constexpr inline struct fd_gpu_event_info fd_gpu_events<chip_range(CHIP >= A7XX)>[FD_GPU_EVENT_MAX] = {
++constexpr inline struct fd_gpu_event_info fd_gpu_events<chip_range(CHIP == A7XX)>[FD_GPU_EVENT_MAX] = {
++    {WRITE_PRIMITIVE_COUNTS, false},  /* FD_WRITE_PRIMITIVE_COUNTS */
++    {START_PRIMITIVE_CTRS, false},    /* FD_START_PRIMITIVE_CTRS */
++    {STOP_PRIMITIVE_CTRS, false},     /* FD_STOP_PRIMITIVE_CTRS */
++    {START_FRAGMENT_CTRS, false},     /* FD_START_FRAGMENT_CTRS */
++    {STOP_FRAGMENT_CTRS, false},      /* FD_STOP_FRAGMENT_CTRS */
++    {START_COMPUTE_CTRS, false},      /* FD_START_COMPUTE_CTRS */
++    {STOP_COMPUTE_CTRS, false},       /* FD_STOP_COMPUTE_CTRS */
++    {ZPASS_DONE, false},              /* FD_ZPASS_DONE */
++    {RB_DONE_TS, true},               /* FD_RB_DONE */
++    {FLUSH_SO_0, false},              /* FD_FLUSH_SO_0 */
++    {FLUSH_SO_1, false},              /* FD_FLUSH_SO_1 */
++    {FLUSH_SO_2, false},              /* FD_FLUSH_SO_2 */
++    {FLUSH_SO_3, false},              /* FD_FLUSH_SO_3 */
++    {CACHE_CLEAN, false},             /* FD_CACHE_CLEAN */
++    {CACHE_INVALIDATE7, false},       /* FD_CACHE_INVALIDATE */
++    {CCU_INVALIDATE_DEPTH, false},    /* FD_CCU_INVALIDATE_DEPTH */
++    {CCU_INVALIDATE_COLOR, false},    /* FD_CCU_INVALIDATE_COLOR */
++    {CCU_RESOLVE_CLEAN, false},       /* FD_CCU_CLEAN_BLIT_CACHE */
++    {CCU_CLEAN_DEPTH, false},         /* FD_CCU_CLEAN_DEPTH */
++    {CCU_CLEAN_COLOR, false},         /* FD_CCU_CLEAN_COLOR */
++    {LRZ_CLEAR, false},               /* FD_LRZ_CLEAR */
++    {LRZ_FLIP_BUFFER, false},         /* FD_LRZ_FLIP */
++    {LRZ_CACHE_FLUSH, false},         /* FD_LRZ_FLUSH */
++    {LRZ_CACHE_INVALIDATE, false},    /* FD_LRZ_INVALIDATE */
++    {VSC_BINNING_START, false},       /* FD_VSC_BINNING_START */
++    {VSC_BINNING_END, false},         /* FD_VSC_BINNING_END */
++    {CCU_RESOLVE, false},             /* FD_CCU_RESOLVE */
++    {DEBUG_LABEL, false},             /* FD_LABEL */
++    {DUMMY_EVENT, false},             /* FD_DUMMY_EVENT */
++};
++
++template <chip CHIP>
++constexpr inline struct fd_gpu_event_info fd_gpu_events<chip_range(CHIP >= A8XX)>[FD_GPU_EVENT_MAX] = {
+     {WRITE_PRIMITIVE_COUNTS, false},  /* FD_WRITE_PRIMITIVE_COUNTS */
+     {START_PRIMITIVE_CTRS, false},    /* FD_START_PRIMITIVE_CTRS */
+     {STOP_PRIMITIVE_CTRS, false},     /* FD_STOP_PRIMITIVE_CTRS */
+--- a/src/freedreno/common/freedreno_gpu_event.h
++++ b/src/freedreno/common/freedreno_gpu_event.h
+@@ -51,6 +51,8 @@ enum fd_gpu_event : uint32_t {
+     FD_CCU_RESOLVE,
+     FD_LABEL,
+     FD_DUMMY_EVENT,
++    FD_SUBPASS_FENCE,
++    FD_SUBPASS_SLICE_FENCE,
+ 
+     FD_GPU_EVENT_MAX,
+ };
+@@ -126,6 +128,7 @@ constexpr inline struct fd_gpu_event_info fd_gpu_events<chip_range(CHIP == A7XX)
+     {CCU_RESOLVE, false},             /* FD_CCU_RESOLVE */
+     {DEBUG_LABEL, false},             /* FD_LABEL */
+     {DUMMY_EVENT, false},             /* FD_DUMMY_EVENT */
++    {SUBPASS_FENCE, false},           /* FD_SUBPASS_FENCE */
+ };
+ 
+ template <chip CHIP>
+@@ -159,6 +162,8 @@ constexpr inline struct fd_gpu_event_info fd_gpu_events<chip_range(CHIP >= A8XX)
+     {CCU_RESOLVE, false},             /* FD_CCU_RESOLVE */
+     {DEBUG_LABEL, false},             /* FD_LABEL */
+     {DUMMY_EVENT, false},             /* FD_DUMMY_EVENT */
++    {SUBPASS_FENCE, false},           /* FD_SUBPASS_FENCE */
++    {SUBPASS_SLICE_FENCE, false},     /* FD_SUBPASS_SLICE_FENCE */
+ };
+ 
+ #endif

@@ -1,0 +1,14 @@
+{
+  "date": "2026-10-07",
+  "mesaRevision": "48297c834466",
+  "sourcesPrepared": true,
+  "referenceDriverSha256": "1559bf7493ae397c274c9743befcbcc4bd6cfd6e1232f4f41f0f45e5374c25bb",
+  "compilerProfileSha256": "c222722529f8ea1d98b9a1e89a4c91ff96b3d7cd8c8bfafc6836c3f10bdafd2c",
+  "gpuValidated": false,
+  "compiled": true,
+  "ndkVersion": "27.3.13750724",
+  "driverSha256": "c1cbb56cd54158909d3a0da7221364ea6f55e4d40ac670a8bf591f65419f70db",
+  "byteIdenticalToReference": false,
+  "distributedBinary": "historical reference from universal v907",
+  "vrsPolicyTests": {"passed": true, "oracleCells": 19384, "sanitizers": ["address", "undefined"]}
+}

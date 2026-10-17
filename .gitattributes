@@ -1,0 +1,5 @@
+# Retain byte-exact historical patches and hashed build inputs on every platform.
+* -text
+*.png binary
+*.so binary
+*.profdata binary

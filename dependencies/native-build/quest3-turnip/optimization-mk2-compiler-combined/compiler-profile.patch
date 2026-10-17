@@ -1,0 +1,55 @@
+--- a/src/compiler/nir/meson.build
++++ b/src/compiler/nir/meson.build
+@@ -379,7 +379,7 @@
+   'nir',
+   [files_libnir, custom_targets_libnir],
+   include_directories : [inc_include, inc_src],
+-  c_args : [c_msvc_compat_args, soong_compat_c_args, no_override_init_args, no_misleading_indentation],
++  c_args : [c_msvc_compat_args, soong_compat_c_args, no_override_init_args, no_misleading_indentation, '-O3', '-fprofile-use=/mnt/e/Codex/AlyxJailbrake/staff/build/compile-latency-01/compiler.profdata', '-flto=thin', '-mcpu=cortex-a78c'],
+   gnu_symbol_visibility : 'hidden',
+   dependencies : [idep_compiler, dep_valgrind, idep_mesautil],
+   build_by_default : false,
+--- a/src/freedreno/ir3/meson.build
++++ b/src/freedreno/ir3/meson.build
+@@ -143,7 +143,7 @@
+     ir3_lexer,
+   ],
+   include_directories : [inc_freedreno, inc_include, inc_src],
+-  c_args : [no_override_init_args, soong_compat_c_args],
++  c_args : [no_override_init_args, soong_compat_c_args, '-O3', '-fprofile-use=/mnt/e/Codex/AlyxJailbrake/staff/build/compile-latency-01/compiler.profdata', '-flto=thin', '-mcpu=cortex-a78c'],
+   gnu_symbol_visibility : 'hidden',
+   link_with: [libir3encode, libfreedreno_common],
+   dependencies : [idep_libir3decode, idep_nir_headers, dep_dl, idep_mesautil],
+--- a/src/compiler/spirv/meson.build
++++ b/src/compiler/spirv/meson.build
+@@ -53,7 +53,7 @@
+    vtn_generator_ids_h,
+   ],
+   include_directories : [inc_include, inc_src],
+-  c_args : [c_msvc_compat_args, soong_compat_c_args, no_override_init_args],
++  c_args : [c_msvc_compat_args, soong_compat_c_args, no_override_init_args, '-O3', '-fprofile-use=/mnt/e/Codex/AlyxJailbrake/staff/build/compile-latency-01/compiler.profdata', '-flto=thin', '-mcpu=cortex-a78c'],
+   gnu_symbol_visibility : 'hidden',
+   dependencies : [dep_spirv_tools, idep_nir, dep_valgrind],
+   build_by_default : false,
+--- a/src/util/meson.build
++++ b/src/util/meson.build
+@@ -376,7 +376,7 @@
+   include_directories : [inc_util, include_directories('format')],
+   dependencies : deps_for_libmesa_util,
+   link_with: libmesa_util_links,
+-  c_args : [c_msvc_compat_args, soong_compat_c_args],
++  c_args : [c_msvc_compat_args, soong_compat_c_args, '-O3', '-fprofile-use=/mnt/e/Codex/AlyxJailbrake/staff/build/compile-latency-01/compiler.profdata', '-flto=thin', '-mcpu=cortex-a78c'],
+   gnu_symbol_visibility : 'hidden',
+   build_by_default : false
+ )
+--- a/src/freedreno/vulkan/meson.build
++++ b/src/freedreno/vulkan/meson.build
+@@ -226,7 +226,7 @@
+   c_args : [no_override_init_args, tu_flags, soong_compat_c_args],
+   cpp_args : [tu_cpp_args, tu_flags, soong_compat_cpp_args],
+   gnu_symbol_visibility : 'hidden',
+-  link_args : [vulkan_icd_link_args, ld_args_bsymbolic, ld_args_gc_sections, ld_args_build_id],
++  link_args : [vulkan_icd_link_args, ld_args_bsymbolic, ld_args_gc_sections, ld_args_build_id, '-flto=thin', '-Wl,--thinlto-jobs=8'],
+   link_depends : vulkan_icd_link_depends,
+   install : true,
+ )

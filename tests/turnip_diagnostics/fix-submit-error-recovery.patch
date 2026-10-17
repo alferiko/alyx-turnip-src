@@ -1,0 +1,61 @@
+--- a/src/freedreno/vulkan/tu_queue.cc
++++ b/src/freedreno/vulkan/tu_queue.cc
+@@ -446,8 +446,10 @@
+ 
+    VkResult result =
+       tu_insert_dynamic_cmdbufs(device, &cmd_buffers, &cmdbuf_count);
+-   if (result != VK_SUCCESS)
++   if (result != VK_SUCCESS) {
++      pthread_mutex_unlock(&device->submit_mutex);
+       return result;
++   }
+ 
+    bool has_trace_points = false;
+    static_assert(offsetof(struct tu_cmd_buffer, vk) == 0,
+@@ -460,19 +462,26 @@
+    struct tu_u_trace_submission_data *u_trace_submission_data = NULL;
+ 
+    void *submit = tu_submit_create(device);
+-   if (!submit)
++   if (!submit) {
++      result = VK_ERROR_OUT_OF_HOST_MEMORY;
++      pthread_mutex_unlock(&device->submit_mutex);
+       goto fail_create_submit;
++   }
+ 
+    result = resolve_vis_stream_patchpoints(queue, submit, &dump_cmds,
+                                            cmd_buffers, cmdbuf_count);
+-   if (result != VK_SUCCESS)
++   if (result != VK_SUCCESS) {
++      pthread_mutex_unlock(&device->submit_mutex);
+       goto out;
++   }
+ 
+    result = resolve_cb_control_patchpoints(queue, submit, &dump_cmds,
+                                            cmd_buffers, cmdbuf_count);
+ 
+-   if (result != VK_SUCCESS)
++   if (result != VK_SUCCESS) {
++      pthread_mutex_unlock(&device->submit_mutex);
+       goto out;
++   }
+ 
+    if (has_trace_points) {
+       tu_u_trace_submission_data_create(
+@@ -547,8 +556,6 @@
+ 
+       fd_rd_output_end(rd_output);
+    }
+-
+-   util_dynarray_fini(&dump_cmds);
+ 
+ #ifdef HAVE_PERFETTO
+    if (u_trace_should_process(&device->trace_context)) {
+@@ -599,6 +606,7 @@
+    u_trace_context_process(&device->trace_context, false);
+ 
+ out:
++   util_dynarray_fini(&dump_cmds);
+    tu_submit_finish(device, submit);
+ 
+ fail_create_submit:

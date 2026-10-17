@@ -1,0 +1,1241 @@
+--- a/src/compiler/spirv/spirv_to_nir.c
++++ b/src/compiler/spirv/spirv_to_nir.c
+@@ -8051,9 +8051,12 @@
+          b->shader->info.num_ssbos++;
+          break;
+       case nir_var_mem_push_const:
+-         vtn_assert(b->shader->num_uniforms == 0);
+-         b->shader->num_uniforms =
+-            glsl_get_explicit_size(glsl_without_array(var->type), false);
++         /* Multiple push-constant blocks can occur in one shader stage.
++          * Keep the largest explicit range so every block fits within
++          * the stage's uniform storage. */
++         b->shader->num_uniforms = MAX2(
++            b->shader->num_uniforms,
++            glsl_get_explicit_size(glsl_without_array(var->type), false));
+          break;
+       }
+    }
+--- a/src/freedreno/ir3/ir3_disk_cache.c
++++ b/src/freedreno/ir3/ir3_disk_cache.c
+@@ -121,6 +121,15 @@
+     * pointers need special handling:
+     */
+ 
++   /* A corrupted or torn-write cache blob can carry an implausible size here
++    * that still fits inside the reader; guard the size-driven allocations
++    * against the reader's remaining length so garbage never drives a huge
++    * allocation or a partially populated shader binary. On overrun the
++    * callers propagate a clean deserialize failure. */
++   if (v->info.size > (size_t)(blob->end - blob->current)) {
++      blob->overrun = true;
++      return;
++   }
+    v->bin = rzalloc_size(v, v->info.size);
+    blob_copy_bytes(blob, v->bin, v->info.size);
+ 
+@@ -132,6 +141,11 @@
+       v->imm_state.size = blob_read_uint32(blob);
+       v->imm_state.count = v->imm_state.size;
+       uint32_t immeds_sz = v->imm_state.size * sizeof(v->imm_state.values[0]);
++      if (blob->overrun ||
++          immeds_sz > (size_t)(blob->end - blob->current)) {
++         blob->overrun = true;
++         return;
++      }
+       v->imm_state.values = ralloc_size(v, immeds_sz);
+       blob_copy_bytes(blob, v->imm_state.values, immeds_sz);
+    }
+@@ -182,7 +196,8 @@
+ 
+    retrieve_variant(blob, v);
+ 
+-   if (v->type == MESA_SHADER_VERTEX && ir3_has_binning_vs(&v->key)) {
++   if (!blob->overrun && v->type == MESA_SHADER_VERTEX &&
++       ir3_has_binning_vs(&v->key)) {
+       v->binning = rzalloc_size(v, sizeof(*v->binning));
+       v->binning->id = 0;
+       v->binning->compiler = compiler;
+@@ -195,7 +210,14 @@
+ 
+       retrieve_variant(blob, v->binning);
+    }
+-   
++
++   /* A corrupted or torn-write cache blob must produce a clean miss, never a
++    * half-populated variant that faults later at pipeline bind time. */
++   if (blob->overrun) {
++      ralloc_free(v);
++      return NULL;
++   }
++
+    return v;
+ }
+ 
+@@ -244,10 +266,15 @@
+ 
+    retrieve_variant(&blob, v);
+ 
+-   if (v->binning)
++   if (!blob.overrun && v->binning)
+       retrieve_variant(&blob, v->binning);
+ 
+    free(buffer);
++
++   /* Reject a corrupted or torn-write disk-cache entry as a clean miss so
++    * the caller recompiles instead of using a half-populated variant. */
++   if (blob.overrun)
++      return false;
+ 
+    return true;
+ }
+--- a/src/freedreno/vulkan/tu_cmd_buffer.cc
++++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
+@@ -1658,6 +1658,12 @@
+ 
+    if (util_is_power_of_two_nonzero(tile->slot_mask))
+       tu6_emit_cond_for_load_stores<CHIP>(cmd, cs, tile->pipe, slot, hw_binning);
++   else if (CHIP >= A7XX)
++      /* A merged tile covers multiple visibility slots. No single-slot test
++       * is valid: execute its loads/stores rather than inheriting a predicate
++       * from the previous tile or command buffer.
++       */
++      tu7_set_pred_bit(cs, TU_PREDICATE_LOAD_STORE, true);
+ 
+    tu_cs_emit_pkt7(cs, CP_SET_VISIBILITY_OVERRIDE, 1);
+    tu_cs_emit(cs, !hw_binning);
+@@ -3700,10 +3706,13 @@
+    }
+ 
+    /* Predicate is changed in draw_cs so we have to re-emit it */
+-   if (cmd->state.rp.draw_cs_writes_to_cond_pred &&
+-       util_is_power_of_two_nonzero(tile->slot_mask)) {
+-      uint32_t slot = ffs(tile->slot_mask) - 1;
+-      tu6_emit_cond_for_load_stores<CHIP>(cmd, cs, tile->pipe, slot, false);
++   if (cmd->state.rp.draw_cs_writes_to_cond_pred) {
++      if (util_is_power_of_two_nonzero(tile->slot_mask)) {
++         uint32_t slot = ffs(tile->slot_mask) - 1;
++         tu6_emit_cond_for_load_stores<CHIP>(cmd, cs, tile->pipe, slot, false);
++      } else if (CHIP >= A7XX) {
++         tu7_set_pred_bit(cs, TU_PREDICATE_LOAD_STORE, true);
++      }
+    }
+ 
+    if (cmd->state.pass->allow_ib2_skipping) {
+--- a/src/freedreno/vulkan/tu_device.cc
++++ b/src/freedreno/vulkan/tu_device.cc
+@@ -327,6 +327,8 @@
+       .EXT_extended_dynamic_state2 = true,
+       .EXT_extended_dynamic_state3 = true,
+       .EXT_external_memory_dma_buf = true,
++      .EXT_external_memory_host =
++         is_kgsl(device->instance) && device->has_cached_coherent_memory,
+       .EXT_filter_cubic = device->info->props.has_tex_filter_cubic,
+       .EXT_fragment_density_map = true,
+       .EXT_fragment_density_map_offset = true,
+@@ -1244,6 +1246,7 @@
+    props->viewportBoundsRange[1] = INT16_MAX;
+    props->viewportSubPixelBits = 8;
+    props->minMemoryMapAlignment = 4096; /* A page */
++   props->minImportedHostPointerAlignment = os_page_size;
+    props->minTexelBufferOffsetAlignment = 64;
+    props->minUniformBufferOffsetAlignment = 64;
+    props->minStorageBufferOffsetAlignment = 4;
+@@ -3684,6 +3687,8 @@
+    mem->refcnt = 1;
+ 
+    BITMASK_ENUM(tu_bo_alloc_flags) alloc_flags = TU_BO_ALLOC_NO_FLAGS;
++   VkMemoryPropertyFlags mem_property =
++      device->physical_device->memory.types[pAllocateInfo->memoryTypeIndex];
+ 
+    const VkMemoryAllocateFlagsInfo *flags_info = vk_find_struct_const(
+       pAllocateInfo->pNext, MEMORY_ALLOCATE_FLAGS_INFO);
+@@ -3724,6 +3729,24 @@
+ #else
+       result = VK_ERROR_FEATURE_NOT_PRESENT;
+ #endif
++   } else if (mem->vk.host_ptr) {
++      const VkMemoryPropertyFlags required =
++         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
++         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
++         VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
++
++      if (!is_kgsl(device->instance) ||
++          mem->vk.import_handle_type !=
++             VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT ||
++          (mem_property & required) != required ||
++          (uintptr_t)mem->vk.host_ptr % os_page_size != 0 ||
++          pAllocateInfo->allocationSize % os_page_size != 0) {
++         result = VK_ERROR_INVALID_EXTERNAL_HANDLE;
++      } else {
++         result = tu_bo_init_hostptr(device, &mem->bo,
++                                     pAllocateInfo->allocationSize,
++                                     mem_property, mem->vk.host_ptr);
++      }
+    } else {
+       uint64_t client_address = 0;
+ 
+@@ -3751,9 +3774,6 @@
+       if (device->bo_sizes)
+          snprintf(name, ARRAY_SIZE(name), "vkAllocateMemory(%ldkb)",
+                   (long)DIV_ROUND_UP(pAllocateInfo->allocationSize, 1024));
+-      VkMemoryPropertyFlags mem_property =
+-         device->physical_device->memory.types[pAllocateInfo->memoryTypeIndex];
+-
+       result = _tu_init_memory(device, mem, mem_property, alloc_flags,
+                                pAllocateInfo->allocationSize, client_address,
+                                name);
+@@ -4442,6 +4462,38 @@
+    return VK_SUCCESS;
+ }
+ 
++VKAPI_ATTR VkResult VKAPI_CALL
++tu_GetMemoryHostPointerPropertiesEXT(
++   VkDevice _device,
++   VkExternalMemoryHandleTypeFlagBits handleType,
++   const void *pHostPointer,
++   VkMemoryHostPointerPropertiesEXT *pMemoryHostPointerProperties)
++{
++   VK_FROM_HANDLE(tu_device, device, _device);
++
++   if (handleType !=
++       VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT)
++      return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++
++   uint32_t memory_type_bits = 0;
++   const VkMemoryPropertyFlags required =
++      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
++      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
++      VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
++
++   for (uint32_t i = 0;
++        i < device->physical_device->memory.non_lazy_type_count; i++) {
++      VkMemoryPropertyFlags properties =
++         device->physical_device->memory.types[i];
++      if ((properties & required) == required)
++         memory_type_bits |= 1u << i;
++   }
++
++   pMemoryHostPointerProperties->memoryTypeBits = memory_type_bits;
++   return memory_type_bits ? VK_SUCCESS :
++      vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++}
++
+ VKAPI_ATTR void VKAPI_CALL
+ tu_GetPhysicalDeviceMultisamplePropertiesEXT(
+    VkPhysicalDevice                            physicalDevice,
+--- a/src/freedreno/vulkan/tu_knl.cc
++++ b/src/freedreno/vulkan/tu_knl.cc
+@@ -104,6 +104,32 @@
+     * because we have no way of handling that.
+     */
+    if (dev->physical_device->has_cached_non_coherent_memory)
++      (*bo)->cached_non_coherent = true;
++
++   if (!(*bo)->unique_id)
++      (*bo)->unique_id = (*bo)->gem_handle;
++
++   return VK_SUCCESS;
++}
++
++VkResult
++tu_bo_init_hostptr(struct tu_device *dev,
++                   struct tu_bo **bo,
++                   uint64_t size,
++                   VkMemoryPropertyFlags mem_property,
++                   void *host_ptr)
++{
++   assert(dev->instance->knl->bo_init_hostptr);
++   assert(size == align64(size, os_page_size));
++   assert((uintptr_t)host_ptr == align64((uintptr_t)host_ptr, os_page_size));
++
++   VkResult result = dev->instance->knl->bo_init_hostptr(
++      dev, bo, size, mem_property, host_ptr);
++   if (result != VK_SUCCESS)
++      return result;
++
++   if ((mem_property & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) &&
++       !(mem_property & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))
+       (*bo)->cached_non_coherent = true;
+ 
+    if (!(*bo)->unique_id)
+--- a/src/freedreno/vulkan/tu_knl.h
++++ b/src/freedreno/vulkan/tu_knl.h
+@@ -60,6 +60,7 @@
+ 
+    bool implicit_sync : 1;
+    bool never_unmap : 1;
++   bool externally_owned_map : 1;
+    bool cached_non_coherent : 1;
+    bool lazy : 1;
+ 
+@@ -140,6 +141,10 @@
+                        const char *name);
+    VkResult (*bo_init_dmabuf)(struct tu_device *dev, struct tu_bo **out_bo,
+                               uint64_t size, enum tu_bo_alloc_flags flags, int prime_fd);
++   VkResult (*bo_init_hostptr)(struct tu_device *dev, struct tu_bo **out_bo,
++                              uint64_t size,
++                              VkMemoryPropertyFlags mem_property,
++                              void *host_ptr);
+    int (*bo_export_dmabuf)(struct tu_device *dev, struct tu_bo *bo);
+    VkResult (*bo_alloc_lazy)(struct tu_device *dev, struct tu_bo *bo);
+    VkResult (*bo_map)(struct tu_device *dev, struct tu_bo *bo, void *placed_addr);
+@@ -218,6 +223,13 @@
+                   enum tu_bo_alloc_flags flags,
+                   int fd);
+ 
++VkResult
++tu_bo_init_hostptr(struct tu_device *dev,
++                   struct tu_bo **bo,
++                   uint64_t size,
++                   VkMemoryPropertyFlags mem_property,
++                   void *host_ptr);
++
+ int
+ tu_bo_export_dmabuf(struct tu_device *dev, struct tu_bo *bo);
+ 
+--- a/src/freedreno/vulkan/tu_knl_kgsl.cc
++++ b/src/freedreno/vulkan/tu_knl_kgsl.cc
+@@ -256,8 +256,10 @@
+       }
+    }
+ 
+-   struct kgsl_gpumem_alloc_id req = {
+-      .size = size,
++   /* HorizonOS denies the legacy GPUMEM_ALLOC_ID ioctl to untrusted apps.
++    * GPUOBJ_ALLOC/INFO/FREE are allowlisted and use the same KGSL backing. */
++   struct kgsl_gpuobj_alloc req = {
++       .size = size,
+    };
+ 
+    if (mem_property & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) {
+@@ -279,10 +281,10 @@
+    int ret;
+ 
+    ret = safe_ioctl(dev->physical_device->local_fd,
+-                    IOCTL_KGSL_GPUMEM_ALLOC_ID, &req);
++                    IOCTL_KGSL_GPUOBJ_ALLOC, &req);
+    if (ret) {
+       return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
+-                       "GPUMEM_ALLOC_ID failed (%s)", strerror(errno));
++                       "GPUOBJ_ALLOC failed (%s)", strerror(errno));
+    }
+ 
+    struct tu_bo* bo = tu_device_lookup_bo(dev, req.id);
+@@ -291,7 +293,7 @@
+    *bo = (struct tu_bo) {
+       .gem_handle = req.id,
+       .size = req.mmapsize,
+-      .iova = req.gpuaddr,
++      .iova = 0,
+       .name = tu_debug_bos_add(dev, req.mmapsize, name),
+       .refcnt = 1,
+       .shared_fd = -1,
+@@ -306,6 +308,19 @@
+       result = kgsl_sparse_vma_map(dev, lazy_vma, bo, 0);
+    } else if (flags & TU_BO_ALLOC_REPLAYABLE) {
+       result = kgsl_bo_user_map(dev, bo, client_iova);
++   } else {
++      struct kgsl_gpuobj_info info = {
++         .id = req.id,
++      };
++
++      ret = safe_ioctl(dev->physical_device->local_fd,
++                       IOCTL_KGSL_GPUOBJ_INFO, &info);
++      if (ret) {
++         return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
++                          "GPUOBJ_INFO failed (%s)", strerror(errno));
++      }
++
++      bo->iova = info.gpuaddr;
+    }
+ 
+    if (result != VK_SUCCESS)
+@@ -377,6 +392,77 @@
+ 
+    tu_dump_bo_init(dev, bo);
+ 
++   *out_bo = bo;
++
++   return VK_SUCCESS;
++}
++
++static VkResult
++kgsl_bo_init_hostptr(struct tu_device *dev,
++                     struct tu_bo **out_bo,
++                     uint64_t size,
++                     VkMemoryPropertyFlags mem_property,
++                     void *host_ptr)
++{
++   struct kgsl_gpuobj_import_useraddr import_useraddr = {
++      .virtaddr = (uintptr_t)host_ptr,
++   };
++   struct kgsl_gpuobj_import req = {
++      .priv = (uintptr_t)&import_useraddr,
++      /* KGSL interprets priv_len as the user-address range length. */
++      .priv_len = size,
++      .flags = 0,
++      .type = KGSL_USER_MEM_TYPE_ADDR,
++   };
++
++   if (mem_property & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) {
++      if (mem_property & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)
++         req.flags |= KGSL_MEMFLAGS_IOCOHERENT;
++
++      req.flags |= KGSL_CACHEMODE_WRITEBACK << KGSL_CACHEMODE_SHIFT;
++   } else {
++      req.flags |= KGSL_CACHEMODE_WRITECOMBINE << KGSL_CACHEMODE_SHIFT;
++   }
++
++   int ret = safe_ioctl(dev->physical_device->local_fd,
++                        IOCTL_KGSL_GPUOBJ_IMPORT, &req);
++   if (ret)
++      return vk_errorf(dev, VK_ERROR_INVALID_EXTERNAL_HANDLE,
++                       "Failed to import host pointer (%s)", strerror(errno));
++
++   struct kgsl_gpuobj_info info_req = {
++      .id = req.id,
++   };
++   ret = safe_ioctl(dev->physical_device->local_fd,
++                    IOCTL_KGSL_GPUOBJ_INFO, &info_req);
++   if (ret) {
++      int info_errno = errno;
++      struct kgsl_gpuobj_free free_req = {
++         .id = req.id,
++      };
++      safe_ioctl(dev->physical_device->local_fd,
++                 IOCTL_KGSL_GPUOBJ_FREE, &free_req);
++      return vk_errorf(dev, VK_ERROR_INVALID_EXTERNAL_HANDLE,
++                       "Failed to query imported host pointer (%s)",
++                       strerror(info_errno));
++   }
++
++   struct tu_bo *bo = tu_device_lookup_bo(dev, req.id);
++   assert(bo && bo->gem_handle == 0);
++
++   *bo = (struct tu_bo) {
++      .gem_handle = req.id,
++      .size = info_req.size,
++      .iova = info_req.gpuaddr,
++      .map = host_ptr,
++      .name = tu_debug_bos_add(dev, info_req.size, "hostptr"),
++      .refcnt = 1,
++      .shared_fd = -1,
++   };
++   bo->never_unmap = true;
++   bo->externally_owned_map = true;
++
++   tu_dump_bo_init(dev, bo);
+    *out_bo = bo;
+ 
+    return VK_SUCCESS;
+@@ -429,7 +515,7 @@
+    tu_debug_bos_del(dev, bo);
+    tu_dump_bo_del(dev, bo);
+ 
+-   if (bo->map) {
++   if (bo->map && !bo->externally_owned_map) {
+       TU_RMV(bo_unmap, dev, bo);
+       munmap(bo->map, bo->size);
+    }
+@@ -439,14 +525,14 @@
+ 
+    TU_RMV(bo_destroy, dev, bo);
+ 
+-   struct kgsl_gpumem_free_id req = {
++   struct kgsl_gpuobj_free req = {
+       .id = bo->gem_handle
+    };
+ 
+    /* Tell sparse array that entry is free */
+    memset(bo, 0, sizeof(*bo));
+ 
+-   safe_ioctl(dev->physical_device->local_fd, IOCTL_KGSL_GPUMEM_FREE_ID, &req);
++   safe_ioctl(dev->physical_device->local_fd, IOCTL_KGSL_GPUOBJ_FREE, &req);
+ }
+ 
+ static VkResult
+@@ -498,18 +584,17 @@
+       if (result != VK_SUCCESS)
+          return result;
+    } else {
+-      /* For some cursed reason, the ioctl doesn't return the GPU address so
+-       * we have to query it.
+-       */
+-      struct kgsl_gpumem_get_info info = {
++      /* GPUOBJ_ALLOC does not return the GPU address. Use its matching
++       * allowlisted INFO ioctl instead of the legacy GPUMEM query. */
++      struct kgsl_gpuobj_info info = {
+          .id = req.id,
+       };
+ 
+       ret = safe_ioctl(dev->physical_device->local_fd,
+-                       IOCTL_KGSL_GPUMEM_GET_INFO, &info);
++                       IOCTL_KGSL_GPUOBJ_INFO, &info);
+       if (ret) {
+          return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
+-                          "GPUMEM_GET_INFO failed (%s)", strerror(errno));
++                          "GPUOBJ_INFO failed (%s)", strerror(errno));
+       }
+ 
+       bo->iova = info.gpuaddr;
+@@ -551,12 +636,12 @@
+ static bool
+ kgsl_is_memory_type_supported(int fd, uint32_t flags)
+ {
+-   struct kgsl_gpumem_alloc_id req_alloc = {
++   struct kgsl_gpuobj_alloc req_alloc = {
++      .size = 0x1000,
+       .flags = flags,
+-      .size = 0x1000,
+-   };
+-
+-   int ret = safe_ioctl(fd, IOCTL_KGSL_GPUMEM_ALLOC_ID, &req_alloc);
++   };
++
++   int ret = safe_ioctl(fd, IOCTL_KGSL_GPUOBJ_ALLOC, &req_alloc);
+    if (ret) {
+       return false;
+    }
+@@ -568,9 +653,9 @@
+     */
+    bool supported = (req_alloc.flags & flags) == flags;
+ 
+-   struct kgsl_gpumem_free_id req_free = { .id = req_alloc.id };
+-
+-   safe_ioctl(fd, IOCTL_KGSL_GPUMEM_FREE_ID, &req_free);
++   struct kgsl_gpuobj_free req_free = { .id = req_alloc.id };
++
++   safe_ioctl(fd, IOCTL_KGSL_GPUOBJ_FREE, &req_free);
+ 
+    return supported;
+ }
+@@ -682,21 +767,26 @@
+    kgsl_syncobj_reset(s);
+ }
+ 
+-static struct kgsl_syncobj
+-kgsl_syncobj_dup(struct kgsl_syncobj *s)
+-{
+-   struct kgsl_syncobj dups = *s;
+-   if (s->state == KGSL_SYNCOBJ_STATE_FD && s->fd >= 0) {
+-      dups.fd = dup(s->fd);
+-      assert(dups.fd >= 0);
+-   }
+-   return dups;
++static VkResult
++kgsl_syncobj_dup(const struct kgsl_syncobj *s, struct kgsl_syncobj *out)
++{
++   kgsl_syncobj_init(out, false);
++   if (s->state == KGSL_SYNCOBJ_STATE_FD) {
++      int fd = s->fd < 0 ? -1 : os_dupfd_cloexec(s->fd);
++      if (fd < 0)
++         return VK_ERROR_DEVICE_LOST;
++      *out = *s;
++      out->fd = fd;
++   } else {
++      *out = *s;
++   }
++   return VK_SUCCESS;
+ }
+ 
+ static int
+ timestamp_to_fd(struct tu_queue *queue, uint32_t timestamp)
+ {
+-   int fd;
++   int fd = -1;
+    struct kgsl_timestamp_event event = {
+       .type = KGSL_TIMESTAMP_EVENT_FENCE,
+       .timestamp = timestamp,
+@@ -758,6 +848,36 @@
+    return abs_timeout_ms - cur_time_ms;
+ }
+ 
++/* Quest KGSL may sleep for WAITTIMESTAMP with timeout=0. Export the
++ * timestamp as a sync fence and poll it instead. Only POLLIN without an
++ * error proves completion; a failed export or fence must not release work.
++ */
++static VkResult
++poll_timestamp_safe(int fd, unsigned int context_id, unsigned int timestamp)
++{
++   int fence_fd = -1;
++   struct kgsl_timestamp_event event = {
++      .type = KGSL_TIMESTAMP_EVENT_FENCE,
++      .timestamp = timestamp,
++      .context_id = context_id,
++      .priv = &fence_fd,
++      .len = sizeof(fence_fd),
++   };
++   if (safe_ioctl(fd, IOCTL_KGSL_TIMESTAMP_EVENT, &event) || fence_fd < 0)
++      return VK_ERROR_DEVICE_LOST;
++
++   struct pollfd fence = { .fd = fence_fd, .events = POLLIN, .revents = 0 };
++   int ret = poll(&fence, 1, 0);
++   int poll_errno = errno;
++   close(fence_fd);
++
++   if ((ret < 0 && poll_errno != EINTR) ||
++       (fence.revents & (POLLERR | POLLNVAL | POLLHUP)))
++      return VK_ERROR_DEVICE_LOST;
++
++   return ret > 0 && (fence.revents & POLLIN) ? VK_SUCCESS : VK_TIMEOUT;
++}
++
+ /* safe_ioctl is not enough as restarted waits would not adjust the timeout
+  * which could lead to waiting substantially longer than requested
+  */
+@@ -773,6 +893,9 @@
+       .timeout = get_relative_ms(abs_timeout_ns),
+    };
+ 
++   if (wait.timeout == 0)
++      return poll_timestamp_safe(fd, context_id, timestamp);
++
+    while (true) {
+       int ret = ioctl(fd, IOCTL_KGSL_DEVICE_WAITTIMESTAMP_CTXTID, &wait);
+ 
+@@ -785,8 +908,7 @@
+ 
+          wait.timeout = timeout_ms;
+       } else if (ret == -1) {
+-         assert(errno == ETIMEDOUT);
+-         return VK_TIMEOUT;
++         return errno == ETIMEDOUT ? VK_TIMEOUT : VK_ERROR_DEVICE_LOST;
+       } else {
+          return VK_SUCCESS;
+       }
+@@ -854,12 +976,10 @@
+ 
+    case KGSL_SYNCOBJ_STATE_FD: {
+       int ret = sync_wait(s->fd, get_relative_ms(abs_timeout_ns));
+-      if (ret) {
+-         assert(errno == ETIME);
+-         return VK_TIMEOUT;
+-      } else {
++      if (!ret)
+          return VK_SUCCESS;
+-      }
++      return errno == ETIME || errno == ETIMEDOUT ? VK_TIMEOUT :
++                                                   VK_ERROR_DEVICE_LOST;
+    }
+ 
+    default:
+@@ -867,120 +987,128 @@
+    }
+ }
+ 
+-#define kgsl_syncobj_foreach_state(syncobjs, filter) \
+-   for (uint32_t i = 0; sync = syncobjs[i], i < count; i++) \
+-      if (sync->state == filter)
+-
+-static VkResult
+-kgsl_syncobj_wait_any(struct tu_device* device, struct kgsl_syncobj **syncobjs, uint32_t count, uint64_t abs_timeout_ns)
++static VkResult
++kgsl_syncobj_wait_any(struct tu_device *device, struct kgsl_syncobj **syncobjs,
++                     uint32_t count, uint64_t abs_timeout_ns)
+ {
+    if (count == 0)
+       return VK_TIMEOUT;
+-   else if (count == 1)
++   if (count == 1)
+       return kgsl_syncobj_wait(device, syncobjs[0], abs_timeout_ns);
+ 
+-   uint32_t num_fds = 0;
++   uint32_t num_fds = 0, lowest_timestamp = 0;
+    struct tu_queue *queue = NULL;
+-   struct kgsl_syncobj *sync = NULL;
+-
+-   /* Simple case, we already have a signal one */
+-   kgsl_syncobj_foreach_state(syncobjs, KGSL_SYNCOBJ_STATE_SIGNALED)
++   bool multiple_queues = false;
++   for (uint32_t i = 0; i < count; i++) {
++      const struct kgsl_syncobj *sync = syncobjs[i];
++      if (sync->state == KGSL_SYNCOBJ_STATE_SIGNALED)
++         return VK_SUCCESS;
++      if (sync->state == KGSL_SYNCOBJ_STATE_FD)
++         num_fds++;
++      if (sync->state == KGSL_SYNCOBJ_STATE_TS) {
++         if (!queue) {
++            queue = sync->queue;
++            lowest_timestamp = sync->timestamp;
++         } else if (queue != sync->queue) {
++            multiple_queues = true;
++         } else {
++            lowest_timestamp = min_ts(lowest_timestamp, sync->timestamp);
++         }
++      }
++   }
++
++   if (!num_fds && !queue)
++      return VK_TIMEOUT;
++   /* One timeline needs only its earliest fence, without allocating FDs. */
++   if (!num_fds && !multiple_queues)
++      return wait_timestamp_safe(device->fd, queue->msm_queue_id,
++                                 lowest_timestamp, abs_timeout_ns);
++
++   struct u_vector poll_fds = { 0 };
++   if (!u_vector_init(&poll_fds, 4, sizeof(struct pollfd)))
++      return VK_ERROR_OUT_OF_HOST_MEMORY;
++
++   VkResult result = VK_SUCCESS;
++   uint32_t owned_fds = 0;
++   auto append_timestamp = [&](struct tu_queue *q, uint32_t timestamp) {
++      struct pollfd *p = (struct pollfd *)u_vector_add(&poll_fds);
++      if (!p)
++         return VK_ERROR_OUT_OF_HOST_MEMORY;
++      int fd = timestamp_to_fd(q, timestamp);
++      if (fd < 0)
++         return VK_ERROR_DEVICE_LOST;
++      *p = (struct pollfd) { .fd = fd, .events = POLLIN, .revents = 0 };
++      owned_fds++;
+       return VK_SUCCESS;
+-
+-   kgsl_syncobj_foreach_state(syncobjs, KGSL_SYNCOBJ_STATE_FD)
+-      num_fds++;
+-
+-   /* If we have TS from different queues we cannot compare them and would
+-    * have to convert them into FDs
+-    */
+-   bool convert_ts_to_fd = false;
+-   kgsl_syncobj_foreach_state(syncobjs, KGSL_SYNCOBJ_STATE_TS) {
+-      if (queue != NULL && sync->queue != queue) {
+-         convert_ts_to_fd = true;
+-         break;
+-      }
+-      queue = sync->queue;
+-   }
+-
+-   /* If we have no FD nor TS syncobjs then we can return immediately */
+-   if (num_fds == 0 && queue == NULL)
+-      return VK_TIMEOUT;
+-
+-   VkResult result = VK_TIMEOUT;
+-
+-   struct u_vector poll_fds = { 0 };
+-   uint32_t lowest_timestamp = 0;
+-
+-   if (convert_ts_to_fd || num_fds > 0)
+-      u_vector_init(&poll_fds, 4, sizeof(struct pollfd));
+-
+-   if (convert_ts_to_fd) {
+-      kgsl_syncobj_foreach_state(syncobjs, KGSL_SYNCOBJ_STATE_TS) {
+-         struct pollfd *poll_fd = (struct pollfd *) u_vector_add(&poll_fds);
+-         poll_fd->fd = timestamp_to_fd(sync->queue, sync->timestamp);
+-         poll_fd->events = POLLIN;
+-      }
+-   } else {
+-      /* TSs could be merged by finding the one with the lowest timestamp */
+-      bool first_ts = true;
+-      kgsl_syncobj_foreach_state(syncobjs, KGSL_SYNCOBJ_STATE_TS) {
+-         if (first_ts || timestamp_cmp(sync->timestamp, lowest_timestamp)) {
+-            first_ts = false;
+-            lowest_timestamp = sync->timestamp;
+-         }
+-      }
+-
+-      if (num_fds) {
+-         struct pollfd *poll_fd = (struct pollfd *) u_vector_add(&poll_fds);
+-         poll_fd->fd = timestamp_to_fd(queue, lowest_timestamp);
+-         poll_fd->events = POLLIN;
+-      }
+-   }
+-
+-   if (num_fds) {
+-      kgsl_syncobj_foreach_state(syncobjs, KGSL_SYNCOBJ_STATE_FD) {
+-         struct pollfd *poll_fd = (struct pollfd *) u_vector_add(&poll_fds);
+-         poll_fd->fd = sync->fd;
+-         poll_fd->events = POLLIN;
+-      }
+-   }
+-
+-   if (u_vector_length(&poll_fds) == 0) {
+-      result = wait_timestamp_safe(device->fd, queue->msm_queue_id,
+-                                   lowest_timestamp, MIN2(abs_timeout_ns, INT64_MAX));
+-   } else {
+-      int ret, i;
+-
+-      struct pollfd *fds = (struct pollfd *) poll_fds.data;
++   };
++
++   /* Owned exports precede borrowed descriptors, including on error paths. */
++   if (multiple_queues) {
++      for (uint32_t i = 0; i < count; i++) {
++         const struct kgsl_syncobj *sync = syncobjs[i];
++         if (sync->state != KGSL_SYNCOBJ_STATE_TS)
++            continue;
++         result = append_timestamp(sync->queue, sync->timestamp);
++         if (result != VK_SUCCESS)
++            goto finish;
++      }
++   } else if (queue) {
++      result = append_timestamp(queue, lowest_timestamp);
++      if (result != VK_SUCCESS)
++         goto finish;
++   }
++
++   for (uint32_t i = 0; i < count; i++) {
++      const struct kgsl_syncobj *sync = syncobjs[i];
++      if (sync->state != KGSL_SYNCOBJ_STATE_FD)
++         continue;
++      if (sync->fd < 0) {
++         result = VK_ERROR_DEVICE_LOST;
++         goto finish;
++      }
++      struct pollfd *p = (struct pollfd *)u_vector_add(&poll_fds);
++      if (!p) {
++         result = VK_ERROR_OUT_OF_HOST_MEMORY;
++         goto finish;
++      }
++      *p = (struct pollfd) { .fd = sync->fd, .events = POLLIN, .revents = 0 };
++   }
++
++   {
++      struct pollfd *fds = (struct pollfd *)poll_fds.data;
+       uint32_t fds_count = u_vector_length(&poll_fds);
+-      do {
+-         ret = poll(fds, fds_count, get_relative_ms(abs_timeout_ns));
++      for (;;) {
++         int ret = poll(fds, fds_count, get_relative_ms(abs_timeout_ns));
+          if (ret > 0) {
+-            for (i = 0; i < fds_count; i++) {
+-               if (fds[i].revents & (POLLERR | POLLNVAL)) {
+-                  errno = EINVAL;
+-                  ret = -1;
+-                  break;
++            bool ready = false;
++            for (uint32_t i = 0; i < fds_count; i++) {
++               if (fds[i].revents & (POLLERR | POLLNVAL | POLLHUP)) {
++                  result = VK_ERROR_DEVICE_LOST;
++                  goto finish;
+                }
++               ready |= fds[i].revents & POLLIN;
+             }
+-            break;
+-         } else if (ret == 0) {
+-            errno = ETIME;
++            result = ready ? VK_SUCCESS : VK_TIMEOUT;
+             break;
+          }
+-      } while (ret == -1 && (errno == EINTR || errno == EAGAIN));
+-
+-      for (uint32_t i = 0; i < fds_count - num_fds; i++)
+-         close(fds[i].fd);
+-
+-      if (ret != 0) {
+-         assert(errno == ETIME);
+-         result = VK_TIMEOUT;
+-      } else {
+-         result = VK_SUCCESS;
+-      }
+-   }
+-
++         if (ret == 0) {
++            result = VK_TIMEOUT;
++            break;
++         }
++         if (errno != EINTR && errno != EAGAIN) {
++            result = VK_ERROR_DEVICE_LOST;
++            break;
++         }
++         if (get_relative_ms(abs_timeout_ns) == 0) {
++            result = VK_TIMEOUT;
++            break;
++         }
++      }
++   }
++
++finish:
++   for (uint32_t i = 0; i < owned_fds; i++)
++      close(((struct pollfd *)poll_fds.data)[i].fd);
+    u_vector_finish(&poll_fds);
+    return result;
+ }
+@@ -999,15 +1127,12 @@
+       return VK_SUCCESS;
+ 
+    case KGSL_SYNCOBJ_STATE_FD:
+-      if (s->fd < 0)
+-         *pFd = -1;
+-      else
+-         *pFd = os_dupfd_cloexec(s->fd);
+-      return VK_SUCCESS;
++      *pFd = s->fd < 0 ? -1 : os_dupfd_cloexec(s->fd);
++      return *pFd < 0 ? VK_ERROR_DEVICE_LOST : VK_SUCCESS;
+ 
+    case KGSL_SYNCOBJ_STATE_TS:
+       *pFd = kgsl_syncobj_ts_to_fd(s);
+-      return VK_SUCCESS;
++      return *pFd < 0 ? VK_ERROR_DEVICE_LOST : VK_SUCCESS;
+ 
+    default:
+       UNREACHABLE("Invalid syncobj state");
+@@ -1028,84 +1153,64 @@
+    return VK_SUCCESS;
+ }
+ 
+-static int
+-sync_merge_close(const char *name, int fd1, int fd2, bool close_fd2)
+-{
+-   int fd = sync_merge(name, fd1, fd2);
+-   if (fd < 0)
+-      return -1;
+-
+-   close(fd1);
+-   if (close_fd2)
+-      close(fd2);
+-
+-   return fd;
+-}
+-
+-/* Merges multiple kgsl_syncobjs into a single one which is only signalled
+- * after all submitted syncobjs are signalled
++/* Merge all dependencies, retaining the latest timestamp on one timeline.
++ * The output owns only its own duplicated/exported FDs. On failure it is
++ * reset, so callers cannot accidentally submit without a dependency.
+  */
+-static struct kgsl_syncobj
+-kgsl_syncobj_merge(const struct kgsl_syncobj **syncobjs, uint32_t count)
+-{
+-   struct kgsl_syncobj ret;
+-   kgsl_syncobj_init(&ret, true);
+-
+-   if (count == 0)
+-      return ret;
+-
+-   for (uint32_t i = 0; i < count; ++i) {
++static VkResult
++kgsl_syncobj_merge(const struct kgsl_syncobj **syncobjs, uint32_t count,
++                   struct kgsl_syncobj *out)
++{
++   kgsl_syncobj_init(out, true);
++   for (uint32_t i = 0; i < count; i++) {
+       const struct kgsl_syncobj *sync = syncobjs[i];
+-
+-      switch (sync->state) {
+-      case KGSL_SYNCOBJ_STATE_SIGNALED:
+-         break;
+-
+-      case KGSL_SYNCOBJ_STATE_UNSIGNALED:
+-         kgsl_syncobj_reset(&ret);
+-         return ret;
+-
+-      case KGSL_SYNCOBJ_STATE_TS:
+-         if (ret.state == KGSL_SYNCOBJ_STATE_TS) {
+-            if (ret.queue == sync->queue) {
+-               ret.timestamp = max_ts(ret.timestamp, sync->timestamp);
+-            } else {
+-               ret.state = KGSL_SYNCOBJ_STATE_FD;
+-               int sync_fd = kgsl_syncobj_ts_to_fd(sync);
+-               ret.fd = sync_merge_close("tu_sync", ret.fd, sync_fd, true);
+-               assert(ret.fd >= 0);
+-            }
+-         } else if (ret.state == KGSL_SYNCOBJ_STATE_FD) {
+-            int sync_fd = kgsl_syncobj_ts_to_fd(sync);
+-            ret.fd = sync_merge_close("tu_sync", ret.fd, sync_fd, true);
+-            assert(ret.fd >= 0);
+-         } else {
+-            ret = *sync;
+-         }
+-         break;
+-
+-      case KGSL_SYNCOBJ_STATE_FD:
+-         if (ret.state == KGSL_SYNCOBJ_STATE_FD) {
+-            ret.fd = sync_merge_close("tu_sync", ret.fd, sync->fd, false);
+-            assert(ret.fd >= 0);
+-         } else if (ret.state == KGSL_SYNCOBJ_STATE_TS) {
+-            ret.state = KGSL_SYNCOBJ_STATE_FD;
+-            int sync_fd = kgsl_syncobj_ts_to_fd(sync);
+-            ret.fd = sync_merge_close("tu_sync", ret.fd, sync_fd, true);
+-            assert(ret.fd >= 0);
+-         } else {
+-            ret = *sync;
+-            ret.fd = os_dupfd_cloexec(ret.fd);
+-            assert(ret.fd >= 0);
+-         }
+-         break;
+-
+-      default:
+-         UNREACHABLE("invalid syncobj state");
+-      }
+-   }
+-
+-   return ret;
++      if (sync->state == KGSL_SYNCOBJ_STATE_SIGNALED)
++         continue;
++      if (sync->state == KGSL_SYNCOBJ_STATE_UNSIGNALED) {
++         kgsl_syncobj_reset(out);
++         return VK_SUCCESS;
++      }
++      if (out->state == KGSL_SYNCOBJ_STATE_SIGNALED) {
++         if (kgsl_syncobj_dup(sync, out) != VK_SUCCESS)
++            goto fail;
++         continue;
++      }
++      if (out->state == KGSL_SYNCOBJ_STATE_TS &&
++          sync->state == KGSL_SYNCOBJ_STATE_TS && out->queue == sync->queue) {
++         out->timestamp = max_ts(out->timestamp, sync->timestamp);
++         continue;
++      }
++
++      if (out->state == KGSL_SYNCOBJ_STATE_TS) {
++         int fd = kgsl_syncobj_ts_to_fd(out);
++         if (fd < 0)
++            goto fail;
++         out->state = KGSL_SYNCOBJ_STATE_FD;
++         out->fd = fd;
++      }
++
++      bool owned = sync->state == KGSL_SYNCOBJ_STATE_TS;
++      int incoming = owned ? kgsl_syncobj_ts_to_fd(sync) : sync->fd;
++      if (incoming < 0)
++         goto fail;
++      int merged = sync_merge("tu_sync", out->fd, incoming);
++      int merge_errno = errno;
++      if (owned)
++         close(incoming);
++      if (merged < 0) {
++         errno = merge_errno;
++         goto fail;
++      }
++      close(out->fd);
++      out->fd = merged;
++   }
++   return VK_SUCCESS;
++
++fail:
++   int saved_errno = errno;
++   kgsl_syncobj_reset(out);
++   errno = saved_errno;
++   return VK_ERROR_DEVICE_LOST;
+ }
+ 
+ struct vk_kgsl_syncobj
+@@ -1407,10 +1512,11 @@
+ 
+       wait_semaphores[wait_count] = &last_submit_sync;
+ 
+-      struct kgsl_syncobj wait_sync =
+-         kgsl_syncobj_merge(wait_semaphores, wait_count + 1);
+-      assert(wait_sync.state !=
+-             KGSL_SYNCOBJ_STATE_UNSIGNALED); // Would wait forever
++      struct kgsl_syncobj wait_sync;
++      if (kgsl_syncobj_merge(wait_semaphores, wait_count + 1, &wait_sync) != VK_SUCCESS)
++         return vk_device_set_lost(&queue->device->vk, "empty submit sync merge failed");
++      if (wait_sync.state == KGSL_SYNCOBJ_STATE_UNSIGNALED)
++         return vk_device_set_lost(&queue->device->vk, "empty submit has unsubmitted sync");
+ 
+       if (signal_count == 1) {
+          /* Move instead of duplicating the syncobj, as we don't need to
+@@ -1428,8 +1534,16 @@
+                &container_of(signals[i].sync, struct vk_kgsl_syncobj, vk)
+                    ->syncobj;
+ 
++            struct kgsl_syncobj copy;
++            if (kgsl_syncobj_dup(&wait_sync, &copy) != VK_SUCCESS) {
++               for (uint32_t j = 0; j < i; j++)
++                  kgsl_syncobj_reset(&container_of(signals[j].sync,
++                                                   struct vk_kgsl_syncobj, vk)->syncobj);
++               kgsl_syncobj_destroy(&wait_sync);
++               return vk_device_set_lost(&queue->device->vk, "empty submit sync dup failed");
++            }
+             kgsl_syncobj_reset(signal_sync);
+-            *signal_sync = kgsl_syncobj_dup(&wait_sync);
++            *signal_sync = copy;
+          }
+ 
+          kgsl_syncobj_destroy(&wait_sync);
+@@ -1441,6 +1555,19 @@
+    }
+ 
+    VkResult result = VK_SUCCESS;
++
++   const struct kgsl_syncobj *wait_semaphores[wait_count];
++   for (uint32_t i = 0; i < wait_count; i++) {
++      wait_semaphores[i] =
++         &container_of(waits[i].sync, struct vk_kgsl_syncobj, vk)
++             ->syncobj;
++   }
++
++   struct kgsl_syncobj wait_sync;
++   if (kgsl_syncobj_merge(wait_semaphores, wait_count, &wait_sync) != VK_SUCCESS)
++      return vk_device_set_lost(&queue->device->vk, "submit sync merge failed");
++   if (wait_sync.state == KGSL_SYNCOBJ_STATE_UNSIGNALED)
++      return vk_device_set_lost(&queue->device->vk, "submit has unsubmitted sync");
+ 
+    if (submit->bind_cmds.size != 0)
+       kgsl_bind_finalize(submit);
+@@ -1461,6 +1588,17 @@
+       vk_alloc(&queue->device->vk.alloc, sizeof(*objs) * obj_count,
+                alignof(struct kgsl_command_object),
+                VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
++
++   if (obj_count && !objs) {
++      kgsl_syncobj_destroy(&wait_sync);
++      if (u_trace_submission_data) {
++         mtx_lock(&queue->device->kgsl_profiling_mutex);
++         tu_suballoc_bo_free(&queue->device->kgsl_profiling_suballoc,
++                            &u_trace_submission_data->kgsl_timestamp_bo);
++         mtx_unlock(&queue->device->kgsl_profiling_mutex);
++      }
++      return vk_error(&queue->device->vk, VK_ERROR_OUT_OF_HOST_MEMORY);
++   }
+ 
+    struct kgsl_cmdbatch_profiling_buffer *profiling_buffer = NULL;
+    uint32_t obj_idx = 0;
+@@ -1478,18 +1616,6 @@
+          (struct kgsl_cmdbatch_profiling_buffer *) tu_suballoc_bo_map(bo);
+       memset(profiling_buffer, 0, sizeof(*profiling_buffer));
+    }
+-
+-   const struct kgsl_syncobj *wait_semaphores[wait_count];
+-   for (uint32_t i = 0; i < wait_count; i++) {
+-      wait_semaphores[i] =
+-         &container_of(waits[i].sync, struct vk_kgsl_syncobj, vk)
+-             ->syncobj;
+-   }
+-
+-   struct kgsl_syncobj wait_sync =
+-      kgsl_syncobj_merge(wait_semaphores, wait_count);
+-   assert(wait_sync.state !=
+-          KGSL_SYNCOBJ_STATE_UNSIGNALED); // Would wait forever
+ 
+    struct kgsl_cmd_syncpoint_timestamp ts;
+    struct kgsl_cmd_syncpoint_fence fn;
+@@ -1593,7 +1719,7 @@
+    }
+ 
+ #if HAVE_PERFETTO
+-   if (profiling_buffer) {
++   if (!ret && profiling_buffer) {
+       /* We need to wait for KGSL to queue the GPU command before we can read
+        * the timestamp. Since this is just for profiling and doesn't take too
+        * long, we can just busy-wait for it.
+@@ -1631,8 +1757,6 @@
+    }
+ #endif
+ 
+-   kgsl_syncobj_destroy(&wait_sync);
+-
+    if (ret) {
+       result = vk_device_set_lost(&queue->device->vk, "submit failed: %s\n",
+                                   strerror(errno));
+@@ -1659,6 +1783,8 @@
+    }
+ 
+ fail_submit:
++   kgsl_syncobj_destroy(&wait_sync);
++   vk_free(&queue->device->vk.alloc, objs);
+    if (result != VK_SUCCESS && u_trace_submission_data) {
+       mtx_lock(&queue->device->kgsl_profiling_mutex);
+       tu_suballoc_bo_free(&queue->device->kgsl_profiling_suballoc,
+@@ -1740,6 +1866,7 @@
+       .submitqueue_close = kgsl_submitqueue_close,
+       .bo_init = kgsl_bo_init,
+       .bo_init_dmabuf = kgsl_bo_init_dmabuf,
++      .bo_init_hostptr = kgsl_bo_init_hostptr,
+       .bo_export_dmabuf = kgsl_bo_export_dmabuf,
+       .bo_map = kgsl_bo_map,
+       .bo_allow_dump = kgsl_bo_allow_dump,
+--- a/src/freedreno/vulkan/tu_pipeline.cc
++++ b/src/freedreno/vulkan/tu_pipeline.cc
+@@ -1698,10 +1698,17 @@
+       return NULL;
+ 
+    for (unsigned i = 0; i < ARRAY_SIZE(shaders->nir); i++) {
+-      if (blob_read_uint8(blob)) {
++      if (!blob->overrun && blob_read_uint8(blob)) {
+          shaders->nir[i] =
+             nir_deserialize(NULL, ir3_get_compiler_options(dev->compiler), blob);
+       }
++   }
++
++   /* A corrupted or torn-write blob must produce a clean cache miss rather
++    * than half-deserialized NIR that is used later. */
++   if (blob->overrun) {
++      tu_nir_shaders_destroy(&dev->vk, &shaders->base);
++      return NULL;
+    }
+ 
+    return &shaders->base;
+--- a/src/freedreno/vulkan/tu_shader.cc
++++ b/src/freedreno/vulkan/tu_shader.cc
+@@ -3170,9 +3170,22 @@
+ 
+    shader->variant = ir3_retrieve_variant(blob, dev->compiler, NULL);
+ 
+-   bool has_safe_const = blob_read_uint8(blob);
++   bool has_safe_const = !blob->overrun && blob_read_uint8(blob);
+    if (has_safe_const)
+       shader->safe_const_variant = ir3_retrieve_variant(blob, dev->compiler, NULL);
++
++   /* A corrupted or torn-write pipeline cache blob can pass the cache
++    * header check and still yield a NULL/overrun variant here. Reject it as
++    * a clean cache miss rather than uploading a garbage shader that faults
++    * later at pipeline bind or framebuffer creation. tu_shader_destroy frees
++    * the standalone variant allocations; the object-finish balances
++    * tu_shader_init's object-init. */
++   if (blob->overrun || shader->variant == NULL ||
++       (has_safe_const && shader->safe_const_variant == NULL)) {
++      vk_pipeline_cache_object_finish(&shader->base);
++      tu_shader_destroy(dev, shader);
++      return NULL;
++   }
+ 
+    switch (shader->variant->type) {
+    case MESA_SHADER_TESS_EVAL:
+@@ -3183,6 +3196,12 @@
+       break;
+    default:
+       break;
++   }
++
++   if (blob->overrun) {
++      vk_pipeline_cache_object_finish(&shader->base);
++      tu_shader_destroy(dev, shader);
++      return NULL;
+    }
+ 
+    VkResult result = tu_upload_shader(dev, shader);
+--- a/src/freedreno/vulkan/tu_tile_config.cc
++++ b/src/freedreno/vulkan/tu_tile_config.cc
+@@ -258,10 +258,10 @@
+     * compatible width/height.
+     */
+    if (dst->pos.x == src->pos.x) {
+-      if (dst->sysmem_extent.height != src->sysmem_extent.height)
++      if (dst->sysmem_extent.width != src->sysmem_extent.width)
+          return false;
+    } else if (dst->pos.y == src->pos.y) {
+-      if (dst->sysmem_extent.width != src->sysmem_extent.width)
++      if (dst->sysmem_extent.height != src->sysmem_extent.height)
+          return false;
+    } else {
+       return false;
+--- a/src/util/u_gralloc/u_gralloc_fallback.c
++++ b/src/util/u_gralloc/u_gralloc_fallback.c
+@@ -156,6 +156,14 @@
+    }
+ #endif
+ 
++   /* HorizonOS gralloc's private-handle layout is not the QTI gmsm layout.
++    * Its app swapchains are linear; choosing tiled for an unknown modifier
++    * corrupts the compositor-visible image. */
++   if (out->modifier == DRM_FORMAT_MOD_INVALID) {
++      mesa_logi("gralloc: unknown private handle layout, assuming LINEAR");
++      out->modifier = DRM_FORMAT_MOD_LINEAR;
++   }
++
+    return 0;
+ }
+ 
+--- a/src/vulkan/util/vk_extensions.py
++++ b/src/vulkan/util/vk_extensions.py
+@@ -361,7 +361,7 @@
+     # on android15-tests-release
+     "VK_KHR_calibrated_timestamps": 35,
+     "VK_KHR_cooperative_matrix": 35,
+-    "VK_KHR_dynamic_rendering_local_read": 35,
++    "VK_KHR_dynamic_rendering_local_read": 34,
+     "VK_KHR_index_type_uint8": 35,
+     "VK_KHR_line_rasterization": 35,
+     "VK_KHR_load_store_op_none": 35,

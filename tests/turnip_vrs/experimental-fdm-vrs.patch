@@ -1,0 +1,544 @@
+--- a/src/freedreno/vulkan/tu_cmd_buffer.h
++++ b/src/freedreno/vulkan/tu_cmd_buffer.h
+@@ -10,6 +10,7 @@
+ #ifndef TU_CMD_BUFFER_H
+ #define TU_CMD_BUFFER_H
+ 
++#include "tu_alyx_fdm_vrs.h"
+ #include "tu_common.h"
+ 
+ #include "tu_cs.h"
+@@ -587,6 +588,14 @@
+       struct tu_lrz_state lrz;
+    } suspended_pass;
+ 
++   /* Per-pass map in sub_cs; storage survives until command-buffer reset. */
++   struct {
++      const struct tu_image_view *source;
++      uint8_t *map;
++      uint64_t iova;
++      alyx_vrs::Layout layout;
++   } alyx_vrs;
++
+    bool fdm_enabled;
+    bool fdm_any_subsampled;
+    bool fdm_custom_resolve_subsampled;
+--- a/src/freedreno/vulkan/tu_cmd_buffer.cc
++++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
+@@ -29,6 +29,7 @@
+ #include "tu_tile_config.h"
+ #include "tu_tracepoints.h"
+ #include "tu_trace_bin_layout.h"
++#include "tu_alyx_fdm_vrs.inc"
+ 
+ enum tu_cmd_buffer_status {
+    TU_CMD_BUFFER_STATUS_IDLE = 0,
+@@ -4235,6 +4236,7 @@
+    tu_cs_discard_entries(&cmd_buffer->draw_epilogue_cs);
+    tu_cs_begin(&cmd_buffer->draw_epilogue_cs);
+ 
++   cmd_buffer->state.alyx_vrs = {};
+    cmd_buffer->state.pass = NULL;
+    cmd_buffer->state.subpass = NULL;
+    cmd_buffer->state.framebuffer = NULL;
+@@ -7059,6 +7061,20 @@
+                               const struct tu_subpass *subpass,
+                               struct tu_cs *cs)
+ {
++   if (cmd->state.alyx_vrs.map) {
++      const auto &vrs = cmd->state.alyx_vrs;
++      tu_cs_emit_regs(cs,
++         GRAS_QUALITY_BUFFER_INFO(CHIP, .layered = vrs.layout.layers > 1,
++                                 .tile_mode = TILE6_LINEAR),
++         GRAS_QUALITY_BUFFER_DIMENSION(CHIP, .width = vrs.layout.width,
++                                      .height = vrs.layout.height));
++      tu_cs_emit_regs(cs, GRAS_QUALITY_BUFFER_PITCH(CHIP, .pitch = vrs.layout.pitch,
++                                                  .array_pitch = vrs.layout.layer_size));
++      tu_cs_emit_regs(cs, GRAS_QUALITY_BUFFER_BASE(CHIP, .qword = vrs.iova));
++      tu_emit_raw_event_write<A7XX>(cmd, cs, LRZ_Q_CACHE_INVALIDATE, false);
++      cmd->prev_fsr_is_null = false;
++      return;
++   }
+    if (subpass->fsr_attachment == VK_ATTACHMENT_UNUSED) {
+       tu_cs_emit_regs(cs, GRAS_QUALITY_BUFFER_INFO(CHIP),
+                       GRAS_QUALITY_BUFFER_DIMENSION(CHIP));
+@@ -7544,6 +7560,8 @@
+       VK_FROM_HANDLE(tu_image_view, view, fsr_info->imageView);
+       cmd->state.attachments[a] = view;
+    }
++
++   tu_alyx_vrs_begin<CHIP>(cmd, pRenderingInfo);
+ 
+    VkResult result = tu_setup_dynamic_msrtss(cmd);
+    if (result != VK_SUCCESS) {
+@@ -8565,7 +8583,7 @@
+    STATIC_ASSERT(IR3_DP_FS(frag_size) == IR3_DP_FS_DYNAMIC + 4);
+    STATIC_ASSERT(IR3_DP_FS(frag_offset) == IR3_DP_FS_DYNAMIC + 6);
+    if (num_units > 1) {
+-      if (fs->fs.has_fdm) {
++      if (fs->fs.has_fdm && !cmd->state.alyx_vrs.map) {
+          struct apply_fs_params_state state = {
+             .num_consts = num_units - 1,
+             .custom_resolve = cmd->state.subpass->custom_resolve,
+@@ -10183,6 +10201,7 @@
+    const VkRenderPassFragmentDensityMapOffsetEndInfoEXT *fdm_offset_info =
+       vk_find_struct_const(pRenderingEndInfo,
+                            RENDER_PASS_FRAGMENT_DENSITY_MAP_OFFSET_END_INFO_EXT);
++   tu_alyx_vrs_end(cmd_buffer, fdm_offset_info);
+    const VkOffset2D *fdm_offsets =
+       (fdm_offset_info && fdm_offset_info->fragmentDensityOffsetCount > 0) ?
+       fdm_offset_info->pFragmentDensityOffsets : NULL;
+--- a/src/freedreno/vulkan/tu_pipeline.cc
++++ b/src/freedreno/vulkan/tu_pipeline.cc
+@@ -3808,7 +3808,8 @@
+                                const vk_fragment_shading_rate_state *fsr,
+                                bool enable_att_fsr,
+                                bool enable_prim_fsr,
+-                               bool fs_reads_fsr)
++                               bool fs_reads_fsr,
++                               bool alyx_fdm_vrs)
+ {
+    return 6;
+ }
+@@ -3819,8 +3820,22 @@
+                                const vk_fragment_shading_rate_state *fsr,
+                                bool enable_att_fsr,
+                                bool enable_prim_fsr,
+-                               bool fs_reads_fsr)
+-{
++                               bool fs_reads_fsr,
++                               bool alyx_fdm_vrs)
++{
++   vk_fragment_shading_rate_state vrs = {};
++   if (alyx_fdm_vrs) {
++      /* Shader-written/read rates retain full density. This experiment does
++       * not compose application FSR with the FDM replacement. */
++      const bool coarse_allowed = !enable_prim_fsr && !fs_reads_fsr;
++      vrs.fragment_size = {1, 1};
++      vrs.combiner_ops[0] = VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR;
++      vrs.combiner_ops[1] = coarse_allowed ? VK_FRAGMENT_SHADING_RATE_COMBINER_OP_REPLACE_KHR
++                                         : VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR;
++      fsr = &vrs;
++      enable_att_fsr = coarse_allowed;
++      enable_prim_fsr = false;
++   }
+    /* gl_ShadingRateEXT don't read 1x1 value with null config, so
+     * if it is read - we have to emit the config.
+     */
+@@ -4082,11 +4097,12 @@
+          VK_PIPELINE_CREATE_2_RENDERING_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR;
+       DRAW_STATE_COND(fragment_shading_rate,
+                       TU_DYNAMIC_STATE_A7XX_FRAGMENT_SHADING_RATE,
+-                      attachments_valid && pipeline_contains_all_shader_state(pipeline),
++                      attachments_valid && pipeline_contains_all_shader_state(pipeline) &&
++                         alyx_vrs::mode() == alyx_vrs::Off,
+                       builder->graphics_state.fsr,
+                       has_fsr_att,
+                       pipeline->program.writes_shading_rate,
+-                      pipeline->program.reads_shading_rate);
++                      pipeline->program.reads_shading_rate, false);
+    }
+ #undef DRAW_STATE
+ #undef DRAW_STATE_COND
+@@ -4294,7 +4310,8 @@
+                &cmd->vk.dynamic_graphics_state.fsr,
+                cmd->state.subpass->fsr_attachment != VK_ATTACHMENT_UNUSED,
+                cmd->state.program.writes_shading_rate,
+-               cmd->state.program.reads_shading_rate);
++               cmd->state.program.reads_shading_rate,
++               cmd->state.alyx_vrs.map != NULL);
+    }
+    DRAW_STATE_COND(rast, TU_DYNAMIC_STATE_RAST,
+                    cmd->state.dirty & (TU_CMD_DIRTY_SUBPASS |
+--- /dev/null
++++ b/src/freedreno/vulkan/tu_alyx_fdm_vrs.h
+@@ -0,0 +1,202 @@
++/* SPDX-License-Identifier: MIT
++ * Experimental CPU-side FDM -> A7xx quality-buffer policy. No Mesa dependency.
++ */
++#ifndef TU_ALYX_FDM_VRS_H
++#define TU_ALYX_FDM_VRS_H
++#include <stdint.h>
++#include <stdlib.h>
++#include <string.h>
++#include <math.h>
++
++namespace alyx_vrs {
++enum Mode { Off, Control, Union };
++inline Mode parse_mode(const char *value)
++{
++   if (value && !strcmp(value, "control")) return Control;
++   if (value && !strcmp(value, "union")) return Union;
++   return Off;
++}
++inline Mode mode()
++{
++   /* Read once: changing pipeline-state policy halfway through a process is unsafe. */
++   static const Mode selected = parse_mode(getenv("ALYX_FDM_VRS"));
++   return selected;
++}
++struct Layout { uint32_t width, height, pitch, layer_size, layers, bytes; };
++inline bool layout(uint32_t width, uint32_t height, uint32_t layers, Layout *out)
++{
++   /* Bounded arithmetic, CPU work, and suballocator growth. */
++   if (!width || !height || width > 4096 || height > 4096 || !layers || layers > 2)
++      return false;
++   out->width = (width + 7) / 8;
++   out->height = (height + 7) / 8;
++   out->pitch = (out->width + 63) & ~63u;
++   out->layer_size = out->pitch * out->height;
++   out->layers = layers;
++   out->bytes = out->layer_size * layers;
++   return true;
++}
++inline unsigned exponent(float area)
++{
++   /* Never round toward a coarser rate. Invalid / zero density means full quality. */
++   if (!isfinite(area) || area < 2.0f) return 0;
++   return area < 4.0f ? 1 : 2;
++}
++struct Rate { unsigned x, y; };
++inline Rate rate(float x, float y) { return { exponent(x), exponent(y) }; }
++/* Exact equivalent of rate(255 / x, 255 / y) for RG8 UNORM, avoiding format
++ * dispatch and reciprocal operations in the per-cell sampling loop. */
++inline unsigned density_exponent(uint8_t density)
++{
++   return !density || density >= 128 ? 0 : density >= 64 ? 1 : 2;
++}
++inline Rate density_rate(uint8_t x, uint8_t y)
++{
++   return {density_exponent(x), density_exponent(y)};
++}
++inline unsigned source_coord(int32_t pixel, unsigned extent, unsigned shift)
++{
++   const unsigned cell = pixel <= 0 ? 0 : uint32_t(pixel) >> shift;
++   return cell < extent ? cell : extent - 1;
++}
++inline Rate intersect(Rate a, Rate b)
++{
++   return { a.x < b.x ? a.x : b.x, a.y < b.y ? a.y : b.y };
++}
++inline uint8_t encode(Rate r) { return uint8_t((r.x << 2) | r.y); }
++struct Offset { int32_t x, y; };
++/* CPU-only, exact-content LRU. The caller serializes access. No image handles,
++ * mappings or command-buffer allocations survive a lookup. A hit still copies
++ * into the current command buffer's own allocation. */
++struct CacheKey {
++   uint32_t width, height, source_width, source_height, layers, shift_x, shift_y, mode;
++   Offset offsets[2];
++};
++static_assert(sizeof(CacheKey) == 12 * sizeof(uint32_t), "canonical cache key");
++struct CacheSource {
++   const uint8_t *data;
++   uint64_t bytes, pitch, layer_stride;
++};
++class MapCache {
++public:
++   static constexpr unsigned Capacity = 8;
++   static constexpr size_t Budget = 2 * 1024 * 1024;
++   MapCache() = default;
++   MapCache(const MapCache &) = delete;
++   MapCache &operator=(const MapCache &) = delete;
++   ~MapCache() { clear(); }
++   size_t bytes() const { return used; }
++   unsigned size() const {
++      unsigned n = 0; for (const auto &entry : entries) n += entry.data != nullptr;
++      return n;
++   }
++   void clear() { for (auto &entry : entries) erase(entry); }
++   static bool valid(const CacheKey &key, const CacheSource &source, const Layout &l) {
++      Layout expected{};
++      if (!source.data || !key.source_width || key.source_width > 512 ||
++          !key.source_height || key.source_height > 512 || key.shift_x > 31 || key.shift_y > 31 ||
++          (key.mode != Control && key.mode != Union) ||
++          !layout(key.width, key.height, key.layers, &expected) || memcmp(&l, &expected, sizeof(l)))
++         return false;
++      const uint64_t row = uint64_t(key.source_width) * 2;
++      if (source.pitch < row || source.bytes < row ||
++          key.source_height - 1 > (source.bytes - row) / source.pitch)
++         return false;
++      const uint64_t plane = uint64_t(key.source_height - 1) * source.pitch + row;
++      return key.layers == 1 || (source.layer_stride >= plane && source.layer_stride <= source.bytes - plane);
++   }
++   bool lookup(const CacheKey &key, const CacheSource &source, const Layout &l, uint8_t *out) {
++      if (!out || !valid(key, source, l)) return false;
++      for (auto &entry : entries) {
++         if (!entry.data || memcmp(&entry.key, &key, sizeof(key))) continue;
++         if (!same_source(entry.data, key, source)) continue;
++         memcpy(out, entry.data + input_size(key), l.bytes);
++         entry.age = ++clock;
++         return true;
++      }
++      return false;
++   }
++   bool store(const CacheKey &key, const CacheSource &source, const Layout &l, const uint8_t *map) {
++      if (!map || !valid(key, source, l)) return false;
++      const size_t input = input_size(key), total = input + l.bytes;
++      if (total > Budget) return false;
++      // Avoid duplicate publication when two recording threads missed together.
++      for (auto &entry : entries)
++         if (entry.data && !memcmp(&entry.key, &key, sizeof(key)) && same_source(entry.data, key, source)) {
++            entry.age = ++clock; return true;
++         }
++      while (used + total > Budget || size() == Capacity) erase(oldest());
++      auto *copy = static_cast<uint8_t *>(malloc(total));
++      if (!copy) return false; // Cache allocation failure never fails rendering.
++      const size_t row = size_t(key.source_width) * 2;
++      size_t cursor = 0;
++      for (unsigned layer = 0; layer < key.layers; ++layer)
++         for (unsigned y = 0; y < key.source_height; ++y, cursor += row)
++            memcpy(copy + cursor, source.data + layer * source.layer_stride + y * source.pitch, row);
++      memcpy(copy + input, map, l.bytes);
++      for (auto &entry : entries) if (!entry.data) {
++         entry.key = key; entry.data = copy; entry.bytes = total; entry.age = ++clock;
++         used += total; return true;
++      }
++      free(copy); return false;
++   }
++private:
++   struct Entry { CacheKey key{}; uint8_t *data = nullptr; size_t bytes = 0; uint64_t age = 0; };
++   Entry entries[Capacity]{};
++   size_t used = 0;
++   uint64_t clock = 0;
++   static size_t input_size(const CacheKey &key) { return size_t(key.source_width) * key.source_height * key.layers * 2; }
++   static bool same_source(const uint8_t *saved, const CacheKey &key, const CacheSource &source) {
++      const size_t row = size_t(key.source_width) * 2;
++      for (unsigned layer = 0; layer < key.layers; ++layer)
++         for (unsigned y = 0; y < key.source_height; ++y, saved += row)
++            if (memcmp(saved, source.data + layer * source.layer_stride + y * source.pitch, row)) return false;
++      return true;
++   }
++   Entry &oldest() {
++      Entry *result = nullptr;
++      for (auto &entry : entries) if (entry.data && (!result || entry.age < result->age)) result = &entry;
++      return *result;
++   }
++   void erase(Entry &entry) { if (entry.data) { used -= entry.bytes; free(entry.data); entry = {}; } }
++};
++inline int32_t subtract_offset(uint32_t value, int32_t offset)
++{
++   const int64_t result = int64_t(value) - offset;
++   return result < INT32_MIN ? INT32_MIN : result > INT32_MAX ? INT32_MAX : int32_t(result);
++}
++
++/* Source texels must cover >=8 framebuffer pixels in each axis. The four
++ * corners then visit every source cell overlapping an 8x8 quality-buffer cell,
++ * including offset-straddling cells. Each eye can independently demand 1x1.
++ * Identical conservative maps are emitted for both layers. Unused pitch bytes
++ * remain 1x1 so padding can never inject a coarser rate.
++ */
++template <typename Sample>
++inline void fill(uint8_t *dst, const Layout &l, uint32_t fb_width, uint32_t fb_height,
++                 Mode selected, const Offset *offsets, uint32_t offset_count, Sample sample)
++{
++   memset(dst, 0, l.bytes);
++   if (selected != Union || (offsets && offset_count != l.layers) ||
++       (!offsets && offset_count)) return;
++   for (uint32_t y = 0; y < l.height; y++) {
++      for (uint32_t x = 0; x < l.width; x++) {
++         const uint32_t x0 = x * 8, y0 = y * 8;
++         const uint32_t x1 = x0 + 7 < fb_width ? x0 + 7 : fb_width - 1;
++         const uint32_t y1 = y0 + 7 < fb_height ? y0 + 7 : fb_height - 1;
++         Rate shared = { 2, 2 };
++         for (uint32_t eye = 0; eye < l.layers; eye++) {
++            const Offset offset = offsets ? offsets[eye] : Offset{};
++            const uint32_t xs[] = {x0, x1}, ys[] = {y0, y1};
++            for (unsigned j = 0; j < 2; j++)
++               for (unsigned i = 0; i < 2; i++)
++                  shared = intersect(shared, sample(subtract_offset(xs[i], offset.x),
++                     subtract_offset(ys[j], offset.y), eye));
++         }
++         for (uint32_t eye = 0; eye < l.layers; eye++)
++            dst[eye * l.layer_size + y * l.pitch + x] = encode(shared);
++      }
++   }
++}
++} /* namespace alyx_vrs */
++#endif
+--- /dev/null
++++ b/src/freedreno/vulkan/tu_alyx_fdm_vrs.inc
+@@ -0,0 +1,184 @@
++/* SPDX-License-Identifier: MIT
++ * Included by tu_cmd_buffer.cc after the normal Turnip headers.
++ * Experimental: primary, unsuspended, single-sample dynamic rendering only.
++ */
++#include "tu_alyx_fdm_vrs.h"
++#include "util/log.h"
++#include <atomic>
++#include <mutex>
++
++static std::mutex alyx_vrs_cache_mutex;
++static alyx_vrs::MapCache alyx_vrs_cache;
++static std::atomic<uint64_t> alyx_vrs_cache_hits{0}, alyx_vrs_cache_misses{0};
++static bool alyx_vrs_cache_enabled()
++{
++   static const bool enabled = [] {
++      const char *value = getenv("ALYX_FDM_VRS_CACHE");
++      return !value || strcmp(value, "0");
++   }();
++   return enabled;
++}
++
++template <chip CHIP>
++static void
++tu_alyx_vrs_begin(struct tu_cmd_buffer *cmd, const VkRenderingInfo *info)
++{
++   cmd->state.alyx_vrs = {};
++   if (CHIP != A7XX || alyx_vrs::mode() == alyx_vrs::Off ||
++       !cmd->device->physical_device->info->props.has_attachment_shading_rate ||
++       cmd->vk.level != VK_COMMAND_BUFFER_LEVEL_PRIMARY ||
++       info->flags != 0 || cmd->state.per_layer_render_area ||
++       cmd->state.suspend_resume != SR_NONE ||
++       !cmd->dynamic_pass.has_fdm || cmd->dynamic_pass.has_msrtss ||
++       cmd->dynamic_pass.subpass_count != 1 ||
++       cmd->state.subpass->samples != VK_SAMPLE_COUNT_1_BIT ||
++       cmd->state.subpass->custom_resolve ||
++       cmd->state.subpass->fsr_attachment != VK_ATTACHMENT_UNUSED ||
++       (info->viewMask != 0 && info->viewMask != 1 && info->viewMask != 3) ||
++       (!info->viewMask && info->layerCount != 1))
++      return;
++
++   const unsigned layers = info->viewMask == 3 ? 2 : 1;
++   const unsigned fdm_att = cmd->dynamic_pass.fragment_density_map.attachment;
++   const struct tu_image_view *fdm = cmd->state.attachments[fdm_att];
++   if (!fdm || !fdm->image->map || fdm->vk.format != VK_FORMAT_R8G8_UNORM ||
++       fdm->image->layout[0].tile_mode != TILE6_LINEAR ||
++       fdm->image->layout[0].cpp != 2 || fdm->vk.layer_count < layers ||
++       !fdm->vk.extent.width || !fdm->vk.extent.height ||
++       fdm->vk.extent.width > cmd->state.framebuffer->width ||
++       fdm->vk.extent.height > cmd->state.framebuffer->height)
++      return;
++   /* The native sampler indexes the mapped image directly. Validate its entire
++    * possible read range before choosing this backend, not after recording. */
++   const uint64_t last = uint64_t(fdm->view.offset) +
++      uint64_t(layers - 1) * fdm->view.layer_size +
++      uint64_t(fdm->vk.extent.height - 1) * fdm->view.pitch +
++      uint64_t(fdm->vk.extent.width) * 2;
++   if (last > fdm->image->total_size)
++      return;
++   for (unsigned a = 0; a < cmd->dynamic_pass.attachment_count; a++) {
++      const struct tu_image_view *view = cmd->state.attachments[a];
++      if (view && (view->image->vk.create_flags & VK_IMAGE_CREATE_SUBSAMPLED_BIT_EXT))
++         return;
++   }
++   alyx_vrs::Layout layout;
++   if (!alyx_vrs::layout(cmd->state.framebuffer->width,
++                         cmd->state.framebuffer->height, layers, &layout))
++      return;
++   struct tu_cs_memory memory;
++   const VkResult result = tu_cs_alloc(&cmd->sub_cs,
++      DIV_ROUND_UP(layout.bytes, 256), 64, &memory);
++   if (result != VK_SUCCESS) {
++      /* No pass mutation happened yet. Do not hide allocator errors. */
++      vk_command_buffer_set_error(&cmd->vk, result);
++      return;
++   }
++   cmd->state.alyx_vrs.source = fdm;
++   cmd->state.alyx_vrs.map = (uint8_t *)memory.map;
++   cmd->state.alyx_vrs.iova = memory.iova;
++   cmd->state.alyx_vrs.layout = layout;
++   memset(memory.map, 0, layout.bytes);
++
++   /* Ordinary full-resolution GMEM/sysmem handling must replace tile FDM.
++    * The source attachment remains alive in attachments[] until EndRendering. */
++   cmd->dynamic_pass.has_fdm = false;
++   cmd->dynamic_pass.has_layered_fdm = false;
++   cmd->dynamic_pass.fragment_density_map.attachment = VK_ATTACHMENT_UNUSED;
++   /* A previous FDM pass may have patched cached shader constants. Re-emit
++    * identity constants for this pass even when its pipeline is unchanged. */
++   cmd->state.dirty |= TU_CMD_DIRTY_FDM;
++}
++
++static void
++tu_alyx_vrs_end(struct tu_cmd_buffer *cmd,
++                const VkRenderPassFragmentDensityMapOffsetEndInfoEXT *info)
++{
++   if (!cmd->state.alyx_vrs.map)
++      return;
++   static_assert(MIN_FDM_TEXEL_SIZE >= 8, "VRS corner coverage requires >=8px source texels");
++   const auto &state = cmd->state.alyx_vrs;
++   const unsigned count = info ? info->fragmentDensityOffsetCount : 0;
++   alyx_vrs::Offset offsets[2] = {};
++   if (count && (count != state.layout.layers || !info->pFragmentDensityOffsets))
++      return; /* Allocation was initialized to 1x1: malformed offsets fail closed. */
++   for (unsigned i = 0; i < count; i++)
++      offsets[i] = {info->pFragmentDensityOffsets[i].x, info->pFragmentDensityOffsets[i].y};
++   const struct tu_image_view *fdm = state.source;
++   const bool direct_rg = fdm->swizzle[0] == PIPE_SWIZZLE_X &&
++                          fdm->swizzle[1] == PIPE_SWIZZLE_Y;
++   const unsigned shift_x = CLAMP(util_logbase2_ceil(cmd->state.framebuffer->width / fdm->vk.extent.width),
++                                 MIN_FDM_TEXEL_SIZE_LOG2, MAX_FDM_TEXEL_SIZE_LOG2);
++   const unsigned shift_y = CLAMP(util_logbase2_ceil(cmd->state.framebuffer->height / fdm->vk.extent.height),
++                                 MIN_FDM_TEXEL_SIZE_LOG2, MAX_FDM_TEXEL_SIZE_LOG2);
++   alyx_vrs::CacheKey cache_key{};
++   cache_key.width = cmd->state.framebuffer->width;
++   cache_key.height = cmd->state.framebuffer->height;
++   cache_key.source_width = fdm->vk.extent.width;
++   cache_key.source_height = fdm->vk.extent.height;
++   cache_key.layers = state.layout.layers;
++   cache_key.shift_x = shift_x;
++   cache_key.shift_y = shift_y;
++   cache_key.mode = alyx_vrs::mode();
++   for (unsigned i = 0; i < count; ++i) cache_key.offsets[i] = offsets[i];
++   const alyx_vrs::CacheSource source = {
++      (const uint8_t *)fdm->image->map + fdm->view.offset,
++      fdm->image->total_size - fdm->view.offset, fdm->view.pitch, fdm->view.layer_size
++   };
++   const bool cacheable = direct_rg && alyx_vrs_cache_enabled() &&
++      alyx_vrs::MapCache::valid(cache_key, source, state.layout);
++   bool hit = false;
++   if (cacheable) {
++      std::lock_guard<std::mutex> lock(alyx_vrs_cache_mutex);
++      hit = alyx_vrs_cache.lookup(cache_key, source, state.layout, state.map);
++   }
++   if (hit) ++alyx_vrs_cache_hits;
++   else {
++      if (cacheable) ++alyx_vrs_cache_misses;
++      alyx_vrs::fill(state.map, state.layout,
++      cmd->state.framebuffer->width, cmd->state.framebuffer->height,
++      alyx_vrs::mode(), count ? offsets : NULL, count,
++      [&](int32_t x, int32_t y, unsigned layer) {
++         if (direct_rg) {
++            const unsigned i = alyx_vrs::source_coord(x, fdm->vk.extent.width, shift_x);
++            const unsigned j = alyx_vrs::source_coord(y, fdm->vk.extent.height, shift_y);
++            const uint8_t *pixel = (const uint8_t *)fdm->image->map + fdm->view.offset +
++               uint64_t(layer) * fdm->view.layer_size + uint64_t(j) * fdm->view.pitch + 2 * i;
++            return alyx_vrs::density_rate(pixel[0], pixel[1]);
++         }
++         struct tu_frag_area area;
++         tu_fragment_density_map_sample(state.source, x, y,
++            cmd->state.framebuffer->width, cmd->state.framebuffer->height, layer, &area);
++         return alyx_vrs::rate(area.width, area.height);
++      });
++      if (cacheable) {
++         std::lock_guard<std::mutex> lock(alyx_vrs_cache_mutex);
++         alyx_vrs_cache.store(cache_key, source, state.layout, state.map);
++      }
++   }
++   /* Bounded evidence of actual accepted passes and generated rates. This is
++    * deliberately not an FPS measurement or a claim that every draw uses VRS. */
++   static std::atomic<uint64_t> passes{0};
++   const uint64_t serial = passes.fetch_add(1, std::memory_order_relaxed) + 1;
++   if (serial <= 8 || serial % 1024 == 0) {
++      unsigned counts[16] = {};
++      for (unsigned layer = 0; layer < state.layout.layers; layer++)
++         for (unsigned y = 0; y < state.layout.height; y++)
++            for (unsigned x = 0; x < state.layout.width; x++)
++               counts[state.map[layer * state.layout.layer_size + y * state.layout.pitch + x] & 15]++;
++      mesa_logi("ALYX_FDM_VRS pass=%llu mode=%s framebuffer=%ux%u source=%ux%u layers=%u rate1x1=%u rate2x2=%u rate4x4=%u cells=%u bytes=%u",
++         (unsigned long long)serial, alyx_vrs::mode() == alyx_vrs::Union ? "union" : "control",
++         cmd->state.framebuffer->width, cmd->state.framebuffer->height,
++         state.source->vk.extent.width, state.source->vk.extent.height,
++         state.layout.layers, counts[0], counts[5], counts[10],
++         state.layout.width * state.layout.height * state.layout.layers, state.layout.bytes);
++      size_t cache_bytes; unsigned entries;
++      {
++         std::lock_guard<std::mutex> lock(alyx_vrs_cache_mutex);
++         cache_bytes = alyx_vrs_cache.bytes(); entries = alyx_vrs_cache.size();
++      }
++      mesa_logi("ALYX_FDM_VRS_CACHE enabled=%u hit=%u hits=%llu misses=%llu entries=%u bytes=%zu",
++         unsigned(alyx_vrs_cache_enabled()), unsigned(hit),
++         (unsigned long long)alyx_vrs_cache_hits.load(), (unsigned long long)alyx_vrs_cache_misses.load(),
++         entries, cache_bytes);
++   }
++}

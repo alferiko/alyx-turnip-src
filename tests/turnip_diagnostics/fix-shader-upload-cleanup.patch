@@ -1,0 +1,34 @@
+--- a/src/freedreno/vulkan/tu_shader.cc
++++ b/src/freedreno/vulkan/tu_shader.cc
+@@ -3431,7 +3431,8 @@
+ 
+    VkResult result = tu_upload_shader(dev, shader);
+    if (result != VK_SUCCESS) {
+-      vk_free(&dev->vk.alloc, shader);
++      vk_pipeline_cache_object_finish(&shader->base);
++      tu_shader_destroy(dev, shader);
+       return NULL;
+    }
+ 
+@@ -3755,7 +3756,8 @@
+ 
+    VkResult result = tu_upload_shader(dev, shader);
+    if (result != VK_SUCCESS) {
+-      vk_free(&dev->vk.alloc, shader);
++      vk_pipeline_cache_object_finish(&shader->base);
++      tu_shader_destroy(dev, shader);
+       return result;
+    }
+ 
+@@ -4089,8 +4091,10 @@
+                                          "noop_fs");
+ 
+    *shader = tu_shader_init(dev, NULL, 0);
+-   if (!*shader)
++   if (!*shader) {
++      ralloc_free(fs_b.shader);
+       return VK_ERROR_OUT_OF_HOST_MEMORY;
++   }
+ 
+    (*shader)->fs.has_fdm = fragment_density_map;
+    if (fragment_density_map && dev->physical_device->info->chip < 7)

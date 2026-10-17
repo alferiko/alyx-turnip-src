@@ -1,0 +1,66 @@
+--- a/src/freedreno/ir3/ir3.c
++++ b/src/freedreno/ir3/ir3.c
+@@ -4,6 +4,7 @@
+  */
+ 
+ #include "ir3.h"
++#include "ir3_alyx_use_pool.h"
+ 
+ #include <assert.h>
+ #include <errno.h>
+@@ -1480,6 +1481,10 @@
+ 
+ void ir3_find_ssa_uses_for(struct ir3 *ir, void *mem_ctx, use_filter_cb filter)
+ {
++   /* All current callers release the entire scratch context, never individual
++    * instr->uses sets. Keep table construction, edges and insertion order. */
++   struct alyx_ir3_use_pool pool = { .mem_ctx = mem_ctx };
++
+    /* We could do this in a single pass if we can assume instructions
+     * are always sorted.  Which currently might not always be true.
+     * (In particular after ir3_group pass, but maybe other places.)
+@@ -1494,7 +1499,7 @@
+             if (!filter(instr, n))
+                continue;
+             if (!src->uses)
+-               src->uses = _mesa_pointer_set_create(mem_ctx);
++               src->uses = alyx_ir3_use_set(&pool);
+             _mesa_set_add(src->uses, instr);
+          }
+       }
+--- /dev/null
++++ b/src/freedreno/ir3/ir3_alyx_use_pool.h
+@@ -0,0 +1,33 @@
++/* Scratch storage for ir3_find_ssa_uses_for's SSA use sets.
++ * Current callers free parent contexts, never individual instr->uses sets.
++ * Expansion tables belong to that parent too. No optimizer rule is changed.
++ */
++#ifndef ALYX_IR3_USE_POOL_H
++#define ALYX_IR3_USE_POOL_H
++#include "util/ralloc.h"
++#include "util/set.h"
++
++struct alyx_ir3_use_pool {
++   void *mem_ctx;
++   struct set *slab;
++   unsigned used;
++};
++
++static inline struct set *
++alyx_ir3_use_set(struct alyx_ir3_use_pool *pool)
++{
++   const unsigned capacity = 128;
++   if (!pool->slab || pool->used == capacity) {
++      struct set *next = ralloc_array(pool->mem_ctx, struct set, capacity);
++      /* If a larger allocation fails, retain the original small-allocation
++       * behavior. Do not reuse/overwrite a full slab. */
++      if (!next)
++         return _mesa_pointer_set_create(pool->mem_ctx);
++      pool->slab = next;
++      pool->used = 0;
++   }
++   struct set *set = &pool->slab[pool->used++];
++   _mesa_pointer_set_init(set, pool->mem_ctx);
++   return set;
++}
++#endif

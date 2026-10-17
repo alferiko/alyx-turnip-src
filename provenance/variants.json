@@ -1,0 +1,23 @@
+{
+  "compat": {
+    "manifest": "provenance/driver-build.json",
+    "binary": "prebuilt/android-arm64/libalyx_turnip.so",
+    "sha256": "1559bf7493ae397c274c9743befcbcc4bd6cfd6e1232f4f41f0f45e5374c25bb",
+    "patchCount": 32,
+    "status": "historical compatibility reference (v907)"
+  },
+  "msaa-vrs": {
+    "manifest": "dependencies/native-build/quest3-turnip/optimization-mk2-msaa-vrs/build.json",
+    "binary": "prebuilt/android-arm64/msaa-vrs/libalyx_turnip.so",
+    "sha256": "d7cfb0b4df979c105a305a849ae9c6f6fd2af1a82f067317a7eec050a26d1764",
+    "patchCount": 33,
+    "status": "MSAA2 + VRS; Quest-tested; selected by 0.185 universal recipe"
+  },
+  "msaa-vrs-cache": {
+    "manifest": "dependencies/native-build/quest3-turnip/optimization-mk2-msaa-vrs-cache/build.json",
+    "binary": "prebuilt/android-arm64/msaa-vrs-cache/libalyx_turnip.so",
+    "sha256": "3575c010b189f3f7b715b265fde97ea0091f7b769f8623cadeb5c35cdaf5d756",
+    "patchCount": 34,
+    "status": "final-map cache; Quest test/demo integration only"
+  }
+}

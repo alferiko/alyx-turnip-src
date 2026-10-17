@@ -1,0 +1,62 @@
+--- a/src/freedreno/vulkan/tu_knl_kgsl.cc
++++ b/src/freedreno/vulkan/tu_knl_kgsl.cc
+@@ -441,6 +441,16 @@
+                        "Failed to get dma-buf info (%s)\n", strerror(info_errno));
+    }
+ 
++   const int shared_fd = os_dupfd_cloexec(fd);
++   if (shared_fd < 0) {
++      const int dup_errno = errno;
++      struct kgsl_gpuobj_free free_req = { .id = req.id };
++      safe_ioctl(dev->physical_device->local_fd,
++                 IOCTL_KGSL_GPUOBJ_FREE, &free_req);
++      return vk_errorf(dev, VK_ERROR_OUT_OF_HOST_MEMORY,
++                       "Failed to duplicate dma-buf fd (%s)", strerror(dup_errno));
++   }
++
+    struct tu_bo* bo = tu_device_lookup_bo(dev, req.id);
+    assert(bo && bo->gem_handle == 0);
+ 
+@@ -450,7 +460,7 @@
+       .iova = info_req.gpuaddr,
+       .name = tu_debug_bos_add(dev, info_req.size, "dmabuf"),
+       .refcnt = 1,
+-      .shared_fd = os_dupfd_cloexec(fd),
++      .shared_fd = shared_fd,
+    };
+ 
+    struct stat st;
+@@ -645,6 +655,10 @@
+       .size = req.mmapsize,
+       .name = NULL,
+       .refcnt = 1,
++      /* Virtual BOs are not registered in dump_bo_list. Error cleanup in
++       * kgsl_bo_user_map must not treat the zeroed index as a live entry.
++       */
++      .dump_bo_list_idx = ~0u,
+       .shared_fd = -1,
+       .base = base,
+    };
+@@ -663,8 +677,10 @@
+       ret = safe_ioctl(dev->physical_device->local_fd,
+                        IOCTL_KGSL_GPUOBJ_INFO, &info);
+       if (ret) {
++         const int info_errno = errno;
++         kgsl_bo_finish(dev, bo);
+          return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
+-                          "GPUOBJ_INFO failed (%s)", strerror(errno));
++                          "GPUOBJ_INFO failed (%s)", strerror(info_errno));
+       }
+ 
+       bo->iova = info.gpuaddr;
+@@ -682,6 +698,10 @@
+    struct kgsl_gpuobj_free req = {
+       .id = vma->kgsl.virtual_bo->gem_handle
+    };
++
++   /* Replayable VMA owns a fixed CPU mapping for its whole lifetime. */
++   if (vma->kgsl.virtual_bo->map)
++      munmap(vma->kgsl.virtual_bo->map, vma->kgsl.virtual_bo->size);
+ 
+    /* Tell sparse array that entry is free */
+    memset(vma->kgsl.virtual_bo, 0, sizeof(*vma->kgsl.virtual_bo));

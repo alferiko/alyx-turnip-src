@@ -1,0 +1,18 @@
+--- a/src/freedreno/ir3/ir3_nir_opt_preamble.c
++++ b/src/freedreno/ir3/ir3_nir_opt_preamble.c
+@@ -777,5 +777,15 @@ ir3_nir_opt_prefetch_descriptors(nir_shader *nir, struct ir3_shader_variant *v)
+    nir_foreach_block (block, main) {
+       nir_foreach_instr (instr, block) {
++         /* Quest experiment: do not speculatively prefetch texture descriptors
++          * used under fragment control flow. Real texture instructions stay
++          * in their original blocks. Unconditional uses of the same descriptor
++          * can still request a prefetch, and vertex stages are unchanged.
++          * This is a performance hypothesis, not a semantic access fix.
++          */
++         if (nir->info.stage == MESA_SHADER_FRAGMENT &&
++             instr->type == nir_instr_type_tex &&
++             block->cf_node.parent->type != nir_cf_node_function)
++            continue;
+          nir_def *descs[2] = { NULL, NULL };
+          nir_def *preamble_descs[2] = { NULL, NULL };
+          get_descriptors(instr, descs);

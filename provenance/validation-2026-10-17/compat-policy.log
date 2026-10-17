@@ -1,0 +1,4 @@
+VRS exact-content cache: invalidation, padding, relocation, LRU and 2MiB cap passed
+VRS pixel-oracle cells: 19384
+VRS policy: all checks passed
+PASS reconstructed variant policy: compat

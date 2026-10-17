@@ -1,0 +1,239 @@
+--- a/src/freedreno/vulkan/tu_shader.h
++++ b/src/freedreno/vulkan/tu_shader.h
+@@ -230,7 +230,8 @@
+                  const void *key_data,
+                  size_t key_size,
+                  struct tu_pipeline_layout *layout,
+-                 bool executable_info);
++                 bool executable_info,
++                 struct ir3_shader **deferred_ir3 = nullptr);
+ 
+ void
+ tu_shader_key_subgroup_size(struct tu_shader_key *key,
+@@ -255,7 +256,8 @@
+                    char **nir_initial_disasm,
+                    void *nir_initial_disasm_mem_ctx,
+                    nir_shader **nir_out,
+-                   VkPipelineCreationFeedback *stage_feedbacks);
++                   VkPipelineCreationFeedback *stage_feedbacks,
++                   bool defer_safe_constlen);
+ 
+ VkResult
+ tu_init_empty_shaders(struct tu_device *device);
+--- a/src/freedreno/vulkan/tu_shader.cc
++++ b/src/freedreno/vulkan/tu_shader.cc
+@@ -3615,7 +3615,8 @@
+                  const void *key_data,
+                  size_t key_size,
+                  struct tu_pipeline_layout *layout,
+-                 bool executable_info)
++                 bool executable_info,
++                 struct ir3_shader **deferred_ir3)
+ {
+    struct tu_shader *shader = tu_shader_init(dev, key_data, key_size);
+ 
+@@ -3692,16 +3693,29 @@
+ 
+    shader->variant =
+       ir3_shader_create_variant(ir3_shader, ir3_key, executable_info);
+-
+-   if (ir3_exceeds_safe_constlen(shader->variant)) {
++   if (!shader->variant) {
++      ir3_shader_destroy(ir3_shader);
++      vk_pipeline_cache_object_finish(&shader->base);
++      tu_shader_destroy(dev, shader);
++      return VK_ERROR_OUT_OF_HOST_MEMORY;
++   }
++
++   if (!deferred_ir3 && ir3_exceeds_safe_constlen(shader->variant)) {
+       struct ir3_shader_key safe_constlen_key = *ir3_key;
+       safe_constlen_key.safe_constlen = true;
+       shader->safe_const_variant =
+          ir3_shader_create_variant(ir3_shader, &safe_constlen_key,
+                                    executable_info);
+-   }
+-
+-   ir3_shader_destroy(ir3_shader);
++      if (!shader->safe_const_variant) {
++         ir3_shader_destroy(ir3_shader);
++         vk_pipeline_cache_object_finish(&shader->base);
++         tu_shader_destroy(dev, shader);
++         return VK_ERROR_OUT_OF_HOST_MEMORY;
++      }
++   }
++
++   if (!deferred_ir3)
++      ir3_shader_destroy(ir3_shader);
+ 
+    shader->view_mask = key->multiview_mask;
+ 
+@@ -3768,11 +3782,17 @@
+       break;
+    }
+ 
+-   VkResult result = tu_upload_shader(dev, shader);
+-   if (result != VK_SUCCESS) {
+-      vk_pipeline_cache_object_finish(&shader->base);
+-      tu_shader_destroy(dev, shader);
+-      return result;
++   if (deferred_ir3) {
++      /* Caller owns this temporary compiler until selection and upload finish.
++       * It is never published in the pipeline cache or stored in tu_shader. */
++      *deferred_ir3 = ir3_shader;
++   } else {
++      VkResult result = tu_upload_shader(dev, shader);
++      if (result != VK_SUCCESS) {
++         vk_pipeline_cache_object_finish(&shader->base);
++         tu_shader_destroy(dev, shader);
++         return result;
++      }
+    }
+ 
+    *shader_out = shader;
+@@ -3849,8 +3869,10 @@
+                    char **nir_initial_disasm,
+                    void *nir_initial_disasm_mem_ctx,
+                    nir_shader **nir_out,
+-                   VkPipelineCreationFeedback *stage_feedbacks)
+-{
++                   VkPipelineCreationFeedback *stage_feedbacks,
++                   bool defer_safe_constlen)
++{
++   struct ir3_shader *deferred_ir3[MESA_SHADER_STAGES] = {};
+    struct ir3_shader_key ir3_key = {};
+    struct tu_shader_info info[MESA_SHADER_STAGES] = {};
+    VkResult result = VK_SUCCESS;
+@@ -3979,7 +4001,8 @@
+                                 &shaders[stage], nir[stage], &keys[stage],
+                                 &info[stage],
+                                 &ir3_key, shader_blake3, sizeof(shader_blake3),
+-                                layout, !!nir_initial_disasm);
++                                layout, !!nir_initial_disasm,
++                                defer_safe_constlen ? &deferred_ir3[stage] : NULL);
+       if (result != VK_SUCCESS) {
+          goto fail;
+       }
+@@ -3987,17 +4010,67 @@
+       stage_feedbacks[stage].duration += os_time_get_nano() - stage_start;
+    }
+ 
++   if (defer_safe_constlen) {
++      const struct ir3_shader_variant *variants[MESA_SHADER_STAGES] = {};
++      for (unsigned stage = 0; stage < MESA_SHADER_STAGES; stage++)
++         variants[stage] = shaders[stage] ? shaders[stage]->variant : NULL;
++
++      /* Match the empty stages inserted by builder_compile_shaders before
++       * tu_emit_program_state runs the same selector. VS and FS are present
++       * by the monolithic-path guard. */
++      if (!variants[MESA_SHADER_TESS_CTRL])
++         variants[MESA_SHADER_TESS_CTRL] = device->empty_tcs->variant;
++      if (!variants[MESA_SHADER_TESS_EVAL])
++         variants[MESA_SHADER_TESS_EVAL] = device->empty_tes->variant;
++      if (!variants[MESA_SHADER_GEOMETRY])
++         variants[MESA_SHADER_GEOMETRY] = device->empty_gs->variant;
++
++      const uint32_t safe_variants = ir3_trim_constlen(variants, device->compiler);
++      for (unsigned stage = 0; stage < MESA_SHADER_STAGES; stage++) {
++         if (!deferred_ir3[stage])
++            continue;
++
++         int64_t stage_start = os_time_get_nano();
++         if (safe_variants & (1u << stage)) {
++            struct ir3_shader_key safe_constlen_key = ir3_key;
++            safe_constlen_key.safe_constlen = true;
++            shaders[stage]->safe_const_variant =
++               ir3_shader_create_variant(deferred_ir3[stage], &safe_constlen_key,
++                                         !!nir_initial_disasm);
++            if (!shaders[stage]->safe_const_variant) {
++               result = VK_ERROR_OUT_OF_HOST_MEMORY;
++               goto fail;
++            }
++         }
++         ir3_shader_destroy(deferred_ir3[stage]);
++         deferred_ir3[stage] = NULL;
++
++         /* Upload selected safe variants together with their normal/binning
++          * variants using the original allocator and draw-state construction. */
++         result = tu_upload_shader(device, shaders[stage]);
++         if (result != VK_SUCCESS)
++            goto fail;
++         stage_feedbacks[stage].duration += os_time_get_nano() - stage_start;
++      }
++   }
++
+    ralloc_free(mem_ctx);
+ 
+    return VK_SUCCESS;
+ 
+ fail:
++   for (unsigned stage = 0; stage < MESA_SHADER_STAGES; stage++) {
++      if (deferred_ir3[stage])
++         ir3_shader_destroy(deferred_ir3[stage]);
++   }
+    ralloc_free(mem_ctx);
+ 
+    for (mesa_shader_stage stage = MESA_SHADER_VERTEX; stage < MESA_SHADER_STAGES;
+         stage = (mesa_shader_stage) (stage + 1)) {
+       if (shaders[stage]) {
+-         tu_shader_destroy(device, shaders[stage]);
++         /* May include a reference obtained from a partial pipeline-cache hit. */
++         vk_pipeline_cache_object_unref(&device->vk, &shaders[stage]->base);
++         shaders[stage] = NULL;
+       }
+       if (nir_out && nir_out[stage]) {
+          ralloc_free(nir_out[stage]);
+--- a/src/freedreno/vulkan/tu_pipeline.cc
++++ b/src/freedreno/vulkan/tu_pipeline.cc
+@@ -1552,7 +1552,8 @@
+                 nir_shader *const *nir,
+                 const struct tu_pipeline_layout *layout,
+                 const struct tu_shader_key *keys,
+-                VkGraphicsPipelineLibraryFlagsEXT state)
++                VkGraphicsPipelineLibraryFlagsEXT state,
++                bool defer_safe_constlen)
+ {
+    blake3_hasher ctx;
+ 
+@@ -1567,6 +1568,9 @@
+       }
+    }
+    _mesa_blake3_update(&ctx, &state, sizeof(state));
++   /* Monolithic entries may omit unused safe alternatives. Keep them out of
++    * the reusable GPL namespace even if all other shader/state inputs match. */
++   _mesa_blake3_update(&ctx, &defer_safe_constlen, sizeof(defer_safe_constlen));
+    enum ir3_shader_debug ir3_debug_key = ir3_shader_debug_hash_key();
+    _mesa_blake3_update(&ctx, &ir3_debug_key, sizeof(ir3_debug_key));
+    _mesa_blake3_final(&ctx, hash);
+@@ -1757,6 +1761,14 @@
+    bool retain_nir =
+       builder->create_flags &
+       VK_PIPELINE_CREATE_2_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT;
++
++   /* Only direct, complete pipelines have a fixed, known stage combination.
++    * Reusable libraries and pipelines importing them retain eager alternatives. */
++   const VkShaderStageFlags constlen_stages =
++      VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
++   const bool defer_safe_constlen =
++      pipeline->type == TU_PIPELINE_GRAPHICS && builder->num_libraries == 0 &&
++      (builder->active_stages & constlen_stages) == constlen_stages;
+ 
+    int64_t pipeline_start = os_time_get_nano();
+ 
+@@ -1957,7 +1969,7 @@
+ 
+    unsigned char pipeline_blake3[BLAKE3_KEY_LEN];
+    tu_hash_shaders(pipeline_blake3, builder->create_flags, stage_infos, nir,
+-                   &builder->layout, keys, builder->state);
++                   &builder->layout, keys, builder->state, defer_safe_constlen);
+ 
+    unsigned char nir_blake3[BLAKE3_KEY_LEN + 1];
+    memcpy(nir_blake3, pipeline_blake3, sizeof(pipeline_blake3));
+@@ -2027,7 +2039,7 @@
+                                   executable_info ? nir_initial_disasm : NULL,
+                                   pipeline->executables_mem_ctx,
+                                   retain_nir ? post_link_nir : NULL,
+-                                  stage_feedbacks);
++                                  stage_feedbacks, defer_safe_constlen);
+ 
+       if (result != VK_SUCCESS)
+          goto fail;

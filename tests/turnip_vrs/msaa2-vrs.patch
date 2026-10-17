@@ -1,0 +1,73 @@
+--- a/src/freedreno/vulkan/tu_alyx_fdm_vrs.inc
++++ b/src/freedreno/vulkan/tu_alyx_fdm_vrs.inc
+@@ -1,6 +1,6 @@
+ /* SPDX-License-Identifier: MIT
+  * Included by tu_cmd_buffer.cc after the normal Turnip headers.
+- * Experimental: primary, unsuspended, single-sample dynamic rendering only.
++ * Experimental: primary, unsuspended, single-sample and MSAA2 dynamic rendering only.
+  */
+ #include "tu_alyx_fdm_vrs.h"
+ #include "util/log.h"
+@@ -29,9 +29,10 @@
+        cmd->vk.level != VK_COMMAND_BUFFER_LEVEL_PRIMARY ||
+        info->flags != 0 || cmd->state.per_layer_render_area ||
+        cmd->state.suspend_resume != SR_NONE ||
+-       !cmd->dynamic_pass.has_fdm || cmd->dynamic_pass.has_msrtss ||
++       cmd->dynamic_pass.has_msrtss ||
+        cmd->dynamic_pass.subpass_count != 1 ||
+-       cmd->state.subpass->samples != VK_SAMPLE_COUNT_1_BIT ||
++       (cmd->state.subpass->samples != VK_SAMPLE_COUNT_1_BIT &&
++        cmd->state.subpass->samples != VK_SAMPLE_COUNT_2_BIT) ||
+        cmd->state.subpass->custom_resolve ||
+        cmd->state.subpass->fsr_attachment != VK_ATTACHMENT_UNUSED ||
+        (info->viewMask != 0 && info->viewMask != 1 && info->viewMask != 3) ||
+@@ -39,8 +40,15 @@
+       return;
+ 
+    const unsigned layers = info->viewMask == 3 ? 2 : 1;
+-   const unsigned fdm_att = cmd->dynamic_pass.fragment_density_map.attachment;
+-   const struct tu_image_view *fdm = cmd->state.attachments[fdm_att];
++   /* Mesa disables tile FDM on MSAA loads/stores. Hardware VRS keeps full
++    * resolution attachments, so read the explicit source even when that
++    * software backend declined it. The source image keeps Vulkan lifetime. */
++   const VkRenderingFragmentDensityMapAttachmentInfoEXT *fdm_info =
++      vk_find_struct_const(info->pNext,
++                           RENDERING_FRAGMENT_DENSITY_MAP_ATTACHMENT_INFO_EXT);
++   if (!fdm_info || fdm_info->imageView == VK_NULL_HANDLE)
++      return;
++   VK_FROM_HANDLE(tu_image_view, fdm, fdm_info->imageView);
+    if (!fdm || !fdm->image->map || fdm->vk.format != VK_FORMAT_R8G8_UNORM ||
+        fdm->image->layout[0].tile_mode != TILE6_LINEAR ||
+        fdm->image->layout[0].cpp != 2 || fdm->vk.layer_count < layers ||
+@@ -155,6 +163,17 @@
+          alyx_vrs_cache.store(cache_key, source, state.layout, state.map);
+       }
+    }
++   /* Cache stores the original map, shared by all sample counts. Clamp only
++    * the command buffer copy: A740 MSAA2 supports at most 4x2, and 4x1/2x4
++    * must conservatively become 2x1/2x2. Never broaden a sharp source cell. */
++   if (cmd->state.subpass->samples == VK_SAMPLE_COUNT_2_BIT) {
++      for (unsigned i = 0; i < state.layout.bytes; ++i) {
++         unsigned x = (state.map[i] >> 2) & 3, y = state.map[i] & 3;
++         y = MIN2(y, 1u);
++         x = MIN2(x, y ? 2u : 1u);
++         state.map[i] = (x << 2) | y;
++      }
++   }
+    /* Bounded evidence of actual accepted passes and generated rates. This is
+     * deliberately not an FPS measurement or a claim that every draw uses VRS. */
+    static std::atomic<uint64_t> passes{0};
+@@ -165,11 +184,11 @@
+          for (unsigned y = 0; y < state.layout.height; y++)
+             for (unsigned x = 0; x < state.layout.width; x++)
+                counts[state.map[layer * state.layout.layer_size + y * state.layout.pitch + x] & 15]++;
+-      mesa_logi("ALYX_FDM_VRS pass=%llu mode=%s framebuffer=%ux%u source=%ux%u layers=%u rate1x1=%u rate2x2=%u rate4x4=%u cells=%u bytes=%u",
++      mesa_logi("ALYX_FDM_VRS pass=%llu mode=%s framebuffer=%ux%u source=%ux%u layers=%u samples=%u rate1x1=%u rate2x2=%u rate4x4=%u rate4x2=%u cells=%u bytes=%u",
+          (unsigned long long)serial, alyx_vrs::mode() == alyx_vrs::Union ? "union" : "control",
+          cmd->state.framebuffer->width, cmd->state.framebuffer->height,
+          state.source->vk.extent.width, state.source->vk.extent.height,
+-         state.layout.layers, counts[0], counts[5], counts[10],
++         state.layout.layers, cmd->state.subpass->samples, counts[0], counts[5], counts[10], counts[9],
+          state.layout.width * state.layout.height * state.layout.layers, state.layout.bytes);
+       size_t cache_bytes; unsigned entries;
+       {

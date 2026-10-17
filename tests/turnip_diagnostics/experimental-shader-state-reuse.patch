@@ -1,0 +1,116 @@
+--- a/src/freedreno/vulkan/tu_cmd_buffer.cc
++++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
+@@ -5486,6 +5486,38 @@
+    }
+ }
+ 
++/* The firmware skips identical PROGRAM_CONFIG groups. Shader groups carry
++ * DIRTY because a changed configuration invalidates their CP_LOAD_STATE data.
++ * If the immutable configuration and a shader group are both unchanged, no
++ * intervening draw-state reset requires reloading that group at this bind.
++ * Keep descriptor preloads, dynamic constants and all other state unchanged.
++ */
++static bool
++alyx_same_immutable_state(const tu_draw_state &a, const tu_draw_state &b)
++{
++   return !a.writeable && !b.writeable && a.iova == b.iova && a.size == b.size;
++}
++
++static void
++alyx_state_reuse_stats(bool config_same, uint32_t skipped, uint32_t nonempty,
++                      bool binning_skipped)
++{
++   /* CPU-only cumulative counters, separated by logcat TID. Not GPU timing. */
++   static thread_local struct {
++      uint64_t binds, eligible, slots, nonempty, binning;
++   } stats;
++   stats.binds++;
++   stats.eligible += config_same;
++   stats.slots += util_bitcount(skipped);
++   stats.nonempty += nonempty;
++   stats.binning += binning_skipped;
++   if (stats.binds <= 4 || !(stats.binds % 16384))
++      mesa_logi("ALYX_STATE_REUSE binds=%llu eligible=%llu skipped=%llu nonempty=%llu vsBinning=%llu scope=cpu-bind-counts",
++         (unsigned long long)stats.binds, (unsigned long long)stats.eligible,
++         (unsigned long long)stats.slots, (unsigned long long)stats.nonempty,
++         (unsigned long long)stats.binning);
++}
++
+ VKAPI_ATTR void VKAPI_CALL
+ tu_CmdBindPipeline(VkCommandBuffer commandBuffer,
+                    VkPipelineBindPoint pipelineBindPoint,
+@@ -5505,6 +5537,43 @@
+ 
+    assert(pipelineBindPoint == VK_PIPELINE_BIND_POINT_GRAPHICS);
+ 
++   uint32_t reused_shader_states = 0, reused_nonempty = 0;
++   const bool same_config = !(cmd->state.dirty & TU_CMD_DIRTY_DRAW_STATE) &&
++      pipeline->program.config_state.size &&
++      alyx_same_immutable_state(cmd->state.program.config_state, pipeline->program.config_state);
++   if (same_config) {
++      if (alyx_same_immutable_state(cmd->state.program.vs_state, pipeline->program.vs_state)) {
++         reused_shader_states |= 1u << TU_DRAW_STATE_VS;
++         reused_nonempty += pipeline->program.vs_state.size != 0;
++      }
++      if (alyx_same_immutable_state(cmd->state.program.vs_binning_state, pipeline->program.vs_binning_state)) {
++         reused_shader_states |= 1u << TU_DRAW_STATE_VS_BINNING;
++         reused_nonempty += pipeline->program.vs_binning_state.size != 0;
++      }
++      if (alyx_same_immutable_state(cmd->state.program.hs_state, pipeline->program.hs_state)) {
++         reused_shader_states |= 1u << TU_DRAW_STATE_HS;
++         reused_nonempty += pipeline->program.hs_state.size != 0;
++      }
++      if (alyx_same_immutable_state(cmd->state.program.ds_state, pipeline->program.ds_state)) {
++         reused_shader_states |= 1u << TU_DRAW_STATE_DS;
++         reused_nonempty += pipeline->program.ds_state.size != 0;
++      }
++      if (alyx_same_immutable_state(cmd->state.program.gs_state, pipeline->program.gs_state)) {
++         reused_shader_states |= 1u << TU_DRAW_STATE_GS;
++         reused_nonempty += pipeline->program.gs_state.size != 0;
++      }
++      if (alyx_same_immutable_state(cmd->state.program.gs_binning_state, pipeline->program.gs_binning_state)) {
++         reused_shader_states |= 1u << TU_DRAW_STATE_GS_BINNING;
++         reused_nonempty += pipeline->program.gs_binning_state.size != 0;
++      }
++      if (alyx_same_immutable_state(cmd->state.program.fs_state, pipeline->program.fs_state)) {
++         reused_shader_states |= 1u << TU_DRAW_STATE_FS;
++         reused_nonempty += pipeline->program.fs_state.size != 0;
++      }
++   }
++   alyx_state_reuse_stats(same_config, reused_shader_states, reused_nonempty,
++      (reused_shader_states & (1u << TU_DRAW_STATE_VS_BINNING)) && pipeline->program.vs_binning_state.size);
++
+    struct tu_graphics_pipeline *gfx_pipeline = tu_pipeline_to_graphics(pipeline);
+    cmd->state.dirty |= TU_CMD_DIRTY_DESC_SETS | TU_CMD_DIRTY_SHADER_CONSTS |
+                        TU_CMD_DIRTY_VS_PARAMS | TU_CMD_DIRTY_PROGRAM;
+@@ -5578,15 +5647,22 @@
+    if (!(cmd->state.dirty & TU_CMD_DIRTY_DRAW_STATE)) {
+       struct tu_cs *cs = &cmd->draw_cs;
+ 
+-      tu_cs_emit_pkt7(cs, CP_SET_DRAW_STATE, 3 * (10 + util_bitcount(set_state_mask)));
++      tu_cs_emit_pkt7(cs, CP_SET_DRAW_STATE, 3 * (10 + util_bitcount(set_state_mask) - util_bitcount(reused_shader_states)));
+       tu_cs_emit_draw_state(cs, TU_DRAW_STATE_PROGRAM_CONFIG, pipeline->program.config_state);
+-      tu_cs_emit_draw_state(cs, TU_DRAW_STATE_VS, pipeline->program.vs_state);
+-      tu_cs_emit_draw_state(cs, TU_DRAW_STATE_VS_BINNING, pipeline->program.vs_binning_state);
+-      tu_cs_emit_draw_state(cs, TU_DRAW_STATE_HS, pipeline->program.hs_state);
+-      tu_cs_emit_draw_state(cs, TU_DRAW_STATE_DS, pipeline->program.ds_state);
+-      tu_cs_emit_draw_state(cs, TU_DRAW_STATE_GS, pipeline->program.gs_state);
+-      tu_cs_emit_draw_state(cs, TU_DRAW_STATE_GS_BINNING, pipeline->program.gs_binning_state);
+-      tu_cs_emit_draw_state(cs, TU_DRAW_STATE_FS, pipeline->program.fs_state);
++      if (!(reused_shader_states & (1u << TU_DRAW_STATE_VS)))
++         tu_cs_emit_draw_state(cs, TU_DRAW_STATE_VS, pipeline->program.vs_state);
++      if (!(reused_shader_states & (1u << TU_DRAW_STATE_VS_BINNING)))
++         tu_cs_emit_draw_state(cs, TU_DRAW_STATE_VS_BINNING, pipeline->program.vs_binning_state);
++      if (!(reused_shader_states & (1u << TU_DRAW_STATE_HS)))
++         tu_cs_emit_draw_state(cs, TU_DRAW_STATE_HS, pipeline->program.hs_state);
++      if (!(reused_shader_states & (1u << TU_DRAW_STATE_DS)))
++         tu_cs_emit_draw_state(cs, TU_DRAW_STATE_DS, pipeline->program.ds_state);
++      if (!(reused_shader_states & (1u << TU_DRAW_STATE_GS)))
++         tu_cs_emit_draw_state(cs, TU_DRAW_STATE_GS, pipeline->program.gs_state);
++      if (!(reused_shader_states & (1u << TU_DRAW_STATE_GS_BINNING)))
++         tu_cs_emit_draw_state(cs, TU_DRAW_STATE_GS_BINNING, pipeline->program.gs_binning_state);
++      if (!(reused_shader_states & (1u << TU_DRAW_STATE_FS)))
++         tu_cs_emit_draw_state(cs, TU_DRAW_STATE_FS, pipeline->program.fs_state);
+       tu_cs_emit_draw_state(cs, TU_DRAW_STATE_VPC, pipeline->program.vpc_state);
+       tu_cs_emit_draw_state(cs, TU_DRAW_STATE_PRIM_MODE_GMEM, pipeline->prim_order.state_gmem);
+ 

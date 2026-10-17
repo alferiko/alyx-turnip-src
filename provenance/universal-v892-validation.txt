@@ -1,0 +1,92 @@
+Universal Quest/PICO v892 - compatibility audit
+
+Scope
+User confirmed the PICO 4 v891 fix works and requested one build in the same
+support branch for Quest 3, PICO 4, PICO 4 Ultra, Quest 2 and Quest Pro.
+Base: 50a7ac65203ad89024a41c7dbb9dab42f5c47520 (working PICO 4 v891).
+Branch: codex/pico4-support. No public release upload requested for this test.
+
+Platform selection
+AlyxHeadsetPlatform.h reads Android manufacturer/brand/model once per native
+library/process. HeadsetIdentity.java applies the same family policy to the
+launcher. Model aliases A8110, A9210 and A9210S cover PICO firmware naming.
+Unknown families and unexpected GPU/driver identities are rejected.
+Build-time legacy Pico/Quest targets retain their previous family selection.
+
+Graphics
+The universal import layer stores the policy per VkDevice. The pinned Turnip
+Adreno 650 selects the guarded RGBA-only adapter validated on PICO 4 v890/v891;
+Adreno 740 selects the existing Quest 3 / Ultra adapter. No GPU is inferred from
+controller type. The underlying adapters, their ABI checks, and the driver are
+unchanged. External depth/motion on 650 remains out of scope and is rejected;
+the public launcher exposes only basic/off reprojection. Quest 2/Pro use of the
+650 producer/import contract still needs physical testing.
+Internal D24S8 Off/SMAA resolves retain v891's full disjoint-binding-range check.
+MSAA 2x keeps its native resolve path. Three AA hosts/corresponding catalogs.
+
+CPU and Android
+All host variants and the import layer compile for API29. Java is checked
+against API29 with the existing guarded API30 storage bridge. The union manifest
+provides Android10 legacy storage permissions and modern all-files access.
+ARM RCpc recovery is compiled into every universal host but uses actual HWCAP;
+only missing operations in registered guest executable ranges are emulated.
+It remains the tested v889 handler; no instruction or guest-library changes.
+CPU emulation overhead remains possible on older processors.
+
+OpenXR and controls
+Use the SHA-pinned Khronos Android loader 1.1.63 on both vendors. Initialize the
+Android loader with VM/context before extension enumeration. Request OpenXR1.0
+in the universal build, with vendor capabilities enabled only when advertised.
+BD profiles, fresh action sets and valid NULL-profile PICO poses are retained.
+Meta Touch/Touch Plus/Touch Pro use their own OpenXR profiles. Optional Plus/Pro
+binding rejection preserves the working core Touch profile. Quest session action
+reuse and the existing calibrated raw poses are preserved.
+PICO camera hands remain disabled in launcher and JNI; Quest remains runtime
+capability gated. PICO adaptive display pacing and Quest refresh requests remain
+separate. The union manifest has both VR categories on the game activity;
+the launcher stays flat. Lean builds have no native OVR metrics dependency.
+
+Updates and logs
+Every universal install has manual updates to prevent installing a platform-
+specific public Quest APK from the existing feed. Legacy target feeds unchanged.
+record-headset-startup.ps1 invokes the existing collectors with an explicit
+universal switch. Device family checks remain; adds brand/memory information
+and the AlyxHeadset diagnostic tag. No destructive log clearing.
+
+Primary references checked 2026-10-05
+https://developers.meta.com/vr/documentation/native/android/mobile-openxr/
+https://developers.meta.com/vr/documentation/native/android/mobile-openxr-actions-actionsets-bindings/
+https://www.qualcomm.com/news/releases/2022/10/snapdragon-xr2--transforms-vr-experiences-on--meta-quest-pro
+Quest Pro is XR2+ Gen1 and uses Touch Pro, independently of Quest3 Touch Plus.
+Generic Android loader compatibility with older Quest firmware needs device
+validation; no blanket claim of all historical OS versions is made.
+
+Automated validation before APK build
+GCC ASan/UBSan: headset_platform, pico_platform, pico_controller_input,
+universal_controller_input (Quest and PICO processes), pico4_layout.
+Java: HeadsetIdentityTest covers all requested names, aliases, casing and unknown.
+NDK API29 syntax: universal, legacy PICO4 and legacy Quest/Ultra import variants.
+ARM64 QEMU neoverse-n1: missing=2, handled=4005; max: missing=0, handled=0.
+Both pass 2000 release/acquire transfers and negative unknown-opcode handling;
+the expected child SIGILL in the negative case is not a test failure.
+PowerShell parsing and incompatible/too-old universal recipe rejection pass.
+
+Physical validation
+v892 has not yet been run on a physical headset. Prior separate PICO4/Ultra
+results do not prove this universal APK works on every model. Quest2/Pro graphics,
+input, memory pressure and level changes require tester coverage. No performance
+claim or guaranteed minimum memory footprint is made.
+
+Completed APK validation - 2026-10-05
+All three universal hosts rebuilt with API29; 6636 frozen input hashes match.
+Each dynamic Vulkan loader gate passes 105 exports with native FDM disabled.
+Universal verifier passes both VR metadata families, runtime discovery, controller
+paths, 650/740 selectors, the pinned generic loader and absence of OVR imports.
+Native API29 audit: zero missing strong imports; four Linux guest ELFs excluded.
+Optional weak imports and device namespace checks are retained in native-api29.json.
+Four native libraries differ from v891 (three hosts and the import layer);
+14 other native libraries and runtime assets are byte-identical.
+APK signature v3 and zipalign -c -P 16 4 pass. Signer SHA256 unchanged:
+76b6349475fbda7348cca4305f9bc5bc144ee592b49bf42884c5316ac44cb639
+APK SHA256: ff2b3414b9389b872117f5df36acbd4aa5bb898ad65d9555a0409d08a66af0ca
+Physical validation remains pending on each target headset.

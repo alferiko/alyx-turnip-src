@@ -1,0 +1,61 @@
+--- a/src/freedreno/vulkan/tu_tile_config.cc
++++ b/src/freedreno/vulkan/tu_tile_config.cc
+@@ -244,14 +244,24 @@
+    uint32_t slot_mask = dst->slot_mask | src->slot_mask;
+    uint32_t visible_views = dst->visible_views | src->visible_views;
+
+-   /* The fragment areas must be the same for views where both bins are
+-    * visible.
++   /* Refine the common density instead of rejecting unequal areas. Never
++    * enlarge a fragment in either dimension for any visible input view.
++    * Keep these tentative values local until every packing check passes.
+     */
++   VkExtent2D combined_areas[MAX_VIEWS] = {};
+    for (unsigned i = 0; i < views; i++) {
+-      if ((dst->visible_views & src->visible_views & (1u << i)) &&
+-          (dst->frag_areas[i].width != src->frag_areas[i].width ||
+-           dst->frag_areas[i].height != src->frag_areas[i].height))
+-         return false;
++      bool in_dst = dst->visible_views & (1u << i);
++      bool in_src = src->visible_views & (1u << i);
++      if (in_dst && in_src) {
++         combined_areas[i] = {
++            MIN2(dst->frag_areas[i].width, src->frag_areas[i].width),
++            MIN2(dst->frag_areas[i].height, src->frag_areas[i].height),
++         };
++      } else if (in_dst) {
++         combined_areas[i] = dst->frag_areas[i];
++      } else if (in_src) {
++         combined_areas[i] = src->frag_areas[i];
++      }
+    }
+
+    /* The tiles must be vertically or horizontally adjacent and have the
+@@ -305,13 +315,9 @@
+     * unscaled bin.
+     */
+    for (unsigned i = 0; i < views; i++) {
+-      if ((dst->visible_views & (1u << i)) &&
+-          (dst->frag_areas[i].width < extent.width ||
+-           dst->frag_areas[i].height * height_multiplier < extent.height))
+-         return false;
+-      if ((src->visible_views & (1u << i)) &&
+-          (src->frag_areas[i].width < extent.width ||
+-           src->frag_areas[i].height * height_multiplier < extent.height))
++      if ((visible_views & (1u << i)) &&
++          (combined_areas[i].width < extent.width ||
++           combined_areas[i].height * height_multiplier < extent.height))
+          return false;
+    }
+
+@@ -319,8 +325,8 @@
+     * src's position.
+     */
+    for (unsigned i = 0; i < views; i++) {
+-      if (src->visible_views & ~dst->visible_views & (1u << i))
+-         dst->frag_areas[i] = src->frag_areas[i];
++      if (visible_views & (1u << i))
++         dst->frag_areas[i] = combined_areas[i];
+       if (((src->visible_views | dst->visible_views) & (1u << i)) &&
+           dst->frag_areas[i].height < extent.height)
+          dst->gmem_extent.height = height_multiplier;

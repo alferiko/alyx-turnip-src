@@ -1,0 +1,8 @@
+/build/
+/out/
+/.venv/
+__pycache__/
+*.pyc
+*.profraw
+.DS_Store
+Thumbs.db

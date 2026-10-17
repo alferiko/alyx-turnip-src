@@ -1,0 +1,15 @@
+--- a/src/freedreno/vulkan/tu_clear_blit.cc
++++ b/src/freedreno/vulkan/tu_clear_blit.cc
+@@ -5698,6 +5698,12 @@
+        cmd->state.pass->attachments[a].clear_mask)
+       return true;
+ 
++   /* Probe the same stale-clear failure in nonempty FDM passes. This
++    * keeps their cleared attachments on the existing A2D STORE path. */
++   if (phys_dev->info->chip == 7 && cmd->state.pass->has_fdm &&
++       cmd->state.pass->attachments[a].clear_mask)
++      return true;
++
+    /* Unaligned store is incredibly rare in CTS, we have to force it to test. */
+    if (TU_DEBUG(UNALIGNED_STORE))
+       return true;

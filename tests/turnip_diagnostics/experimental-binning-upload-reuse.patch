@@ -1,0 +1,161 @@
+--- a/src/freedreno/vulkan/tu_shader.cc
++++ b/src/freedreno/vulkan/tu_shader.cc
+@@ -2915,6 +2915,7 @@
+ struct tu_binning_binary_cache {
+    struct hash_table *table;
+    uint64_t creates, hits, releases;
++   uint64_t preupload_hits, successful_skips, avoided_upload_bytes;
+ };
+ 
+ static uint32_t
+@@ -3018,6 +3019,11 @@
+       mesa_logi("ALYX_BINNING_REUSE creates=%" PRIu64 " hits=%" PRIu64 " releases=%" PRIu64 " live=%u",
+                 cache->creates, cache->hits, cache->releases,
+                 _mesa_hash_table_num_entries(cache->table));
++   if (getenv("ALYX_BINNING_REUSE_AUDIT"))
++      mesa_logi("ALYX_BINNING_UPLOAD_TOTAL lookups=%llu successful=%llu bytes=%llu",
++         (unsigned long long)cache->preupload_hits,
++         (unsigned long long)cache->successful_skips,
++         (unsigned long long)cache->avoided_upload_bytes);
+    /* Valid applications have destroyed their pipelines; mem_cache and internal
+     * shaders have also been destroyed before this device teardown hook. */
+    assert(_mesa_hash_table_num_entries(cache->table) == 0);
+@@ -3031,6 +3037,64 @@
+    dev->binning_binary_cache = NULL;
+ }
+ 
++/* Acquire an existing immutable binary before sizing private shader memory.
++ * A miss performs no allocation and preserves the original upload path. */
++static uint64_t
++tu_lookup_binning_preupload(tu_device *dev, const ir3_shader_variant *v,
++                           tu_binning_binary **reference)
++{
++   assert(!*reference);
++   if (!v || v->type != MESA_SHADER_VERTEX) return 0;
++   pthread_mutex_lock(&dev->pipeline_mutex);
++   auto *cache = dev->binning_binary_cache;
++   uint64_t address = 0;
++   if (cache) {
++      const tu_binning_binary_key key = {
++         _mesa_hash_data(v->bin, v->info.size), v->info.size,
++         v->info.double_threadsize, v->bin,
++      };
++      if (auto *entry = _mesa_hash_table_search(cache->table, &key)) {
++         auto *binary = static_cast<tu_binning_binary *>(entry->data);
++         if (binary->refs != UINT32_MAX) {
++            ++binary->refs;
++            ++cache->hits;
++            ++cache->preupload_hits;
++            *reference = binary;
++            address = binary->iova;
++         }
++      }
++   }
++   pthread_mutex_unlock(&dev->pipeline_mutex);
++   return address;
++}
++
++/* Upload failure must not strand references acquired before allocation. */
++static void
++tu_abandon_binning_preuploads(tu_device *dev, tu_binning_binary **references)
++{
++   pthread_mutex_lock(&dev->pipeline_mutex);
++   for (unsigned i = 0; i < 2; ++i) {
++      tu_release_binning_binary(dev, references[i]);
++      references[i] = NULL;
++   }
++   pthread_mutex_unlock(&dev->pipeline_mutex);
++}
++
++static void
++tu_account_binning_preuploads(tu_device *dev, uint32_t bytes)
++{
++   if (!bytes) return;
++   pthread_mutex_lock(&dev->pipeline_mutex);
++   auto *cache = dev->binning_binary_cache;
++   ++cache->successful_skips;
++   cache->avoided_upload_bytes += bytes;
++   if (cache->successful_skips <= 8 || !(cache->successful_skips % 128))
++      mesa_logi("ALYX_BINNING_UPLOAD_REUSE shaders=%llu bytes=%llu scope=successful-suballocation-and-upload-bytes",
++         (unsigned long long)cache->successful_skips,
++         (unsigned long long)cache->avoided_upload_bytes);
++   pthread_mutex_unlock(&dev->pipeline_mutex);
++}
++
+ static uint64_t
+ tu_upload_variant(struct tu_cs *cs,
+                   const struct ir3_shader_variant *variant)
+@@ -3066,6 +3130,14 @@
+       safe_const_binning = safe_const;
+    }
+ 
++   const uint64_t shared_binning_iova = tu_lookup_binning_preupload(
++      dev, binning, &shader->shared_binning[0]);
++   const uint64_t shared_safe_iova = tu_lookup_binning_preupload(
++      dev, safe_const_binning, &shader->shared_binning[1]);
++   const uint32_t avoided_bytes =
++      (shared_binning_iova ? binning->info.size : 0) +
++      (shared_safe_iova ? safe_const_binning->info.size : 0);
++
+    uint32_t size = 0;
+    if (v->type == MESA_SHADER_VERTEX)
+       size += TU6_EMIT_VFD_DEST_MAX_DWORDS;
+@@ -3080,6 +3152,9 @@
+       }
+    }
+ 
++   assert(!(avoided_bytes & 3) && size >= avoided_bytes / 4);
++   size -= avoided_bytes / 4;
++
+    /* We emit an empty VPC including streamout state in the binning draw state */
+    if (binning || v->type == MESA_SHADER_GEOMETRY) {
+       size += vpc_size;
+@@ -3090,8 +3165,10 @@
+                                           size * 4, 128);
+    pthread_mutex_unlock(&dev->pipeline_mutex);
+ 
+-   if (result != VK_SUCCESS)
++   if (result != VK_SUCCESS) {
++      tu_abandon_binning_preuploads(dev, shader->shared_binning);
+       return result;
++   }
+ 
+    uint32_t pvtmem_size = v->pvtmem_size;
+    bool per_wave = v->pvtmem_per_wave;
+@@ -3120,7 +3197,9 @@
+    if (result != VK_SUCCESS) {
+       pthread_mutex_lock(&dev->pipeline_mutex);
+       tu_suballoc_bo_free(&dev->pipeline_suballoc, &shader->bo);
++      shader->bo = {};
+       pthread_mutex_unlock(&dev->pipeline_mutex);
++      tu_abandon_binning_preuploads(dev, shader->shared_binning);
+       return result;
+    }
+ 
+@@ -3128,15 +3207,20 @@
+    tu_cs_init_suballoc(&shader->cs, dev, &shader->bo);
+ 
+    uint64_t iova = tu_upload_variant(&shader->cs, v);
+-   uint64_t binning_iova = tu_upload_variant(&shader->cs, binning);
++   uint64_t binning_iova = shared_binning_iova ? shared_binning_iova :
++      tu_upload_variant(&shader->cs, binning);
+    uint64_t safe_const_iova = tu_upload_variant(&shader->cs, safe_const);
+-   uint64_t safe_const_binning_iova = tu_upload_variant(&shader->cs, safe_const_binning);
++   uint64_t safe_const_binning_iova = shared_safe_iova ? shared_safe_iova :
++      tu_upload_variant(&shader->cs, safe_const_binning);
+ 
+    struct tu_cs sub_cs;
+-   binning_iova = tu_reference_binning_binary(dev, binning, &shader->bo,
+-                                              binning_iova, &shader->shared_binning[0]);
+-   safe_const_binning_iova = tu_reference_binning_binary(dev, safe_const_binning,
+-      &shader->bo, safe_const_binning_iova, &shader->shared_binning[1]);
++   if (!shader->shared_binning[0])
++      binning_iova = tu_reference_binning_binary(dev, binning, &shader->bo,
++         binning_iova, &shader->shared_binning[0]);
++   if (!shader->shared_binning[1])
++      safe_const_binning_iova = tu_reference_binning_binary(dev, safe_const_binning,
++         &shader->bo, safe_const_binning_iova, &shader->shared_binning[1]);
++   tu_account_binning_preuploads(dev, avoided_bytes);
+    tu_cs_begin_sub_stream(&shader->cs, xs_size +
+                           tu_xs_get_additional_cs_size_dwords(v), &sub_cs);
+    TU_CALLX(dev, tu6_emit_variant)(

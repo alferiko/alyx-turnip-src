@@ -1,0 +1,330 @@
+--- a/src/freedreno/ir3/ir3.c
++++ b/src/freedreno/ir3/ir3.c
+@@ -1658,9 +1658,8 @@ static unsigned
+ cp_flags(unsigned flags)
+ {
+    /* only considering these flags (at least for now): */
+-   flags &= (IR3_REG_CONST | IR3_REG_IMMED | IR3_REG_FNEG | IR3_REG_FABS |
+-             IR3_REG_SNEG | IR3_REG_SABS | IR3_REG_BNOT | IR3_REG_RELATIV |
+-             IR3_REG_SHARED);
++   flags &= (IR3_REG_CONST | IR3_REG_IMMED | IR3_REG_SRC_MODS |
++             IR3_REG_RELATIV | IR3_REG_SHARED);
+    return flags;
+ }
+ 
+@@ -2095,8 +2094,7 @@ static bool
+ is_unmodified_full_gpr(struct ir3_register *src)
+ {
+    return !(src->flags & (IR3_REG_HALF | IR3_REG_CONST | IR3_REG_IMMED |
+-                          IR3_REG_RELATIV | IR3_REG_FNEG | IR3_REG_FABS |
+-                          IR3_REG_SNEG | IR3_REG_SABS | IR3_REG_BNOT));
++                          IR3_REG_RELATIV | IR3_REG_SRC_MODS));
+ }
+ 
+ /* Does `instr` move half of its full GPR src to its half dst? If this is the
+--- a/src/freedreno/ir3/ir3.h
++++ b/src/freedreno/ir3/ir3.h
+@@ -201,6 +201,9 @@ typedef enum ir3_register_flags {
+    IR3_REG_UNIFORM = BIT(24),
+ } ir3_register_flags;
+ 
++#define IR3_REG_SRC_MODS (IR3_REG_FNEG | IR3_REG_FABS | IR3_REG_SNEG | \
++                          IR3_REG_SABS | IR3_REG_BNOT)
++
+ struct ir3_register {
+    BITMASK_ENUM(ir3_register_flags) flags;
+ 
+--- a/src/freedreno/ir3/ir3_cp.c
++++ b/src/freedreno/ir3/ir3_cp.c
+@@ -63,8 +63,7 @@ is_eligible_mov(struct ir3_instruction *instr,
+          return false;
+ 
+       if (!allow_flags)
+-         if (src->flags & (IR3_REG_FABS | IR3_REG_FNEG | IR3_REG_SABS |
+-                           IR3_REG_SNEG | IR3_REG_BNOT))
++         if (src->flags & IR3_REG_SRC_MODS)
+             return false;
+ 
+       return true;
+--- a/src/freedreno/ir3/ir3_postsched.c
++++ b/src/freedreno/ir3/ir3_postsched.c
+@@ -814,8 +814,7 @@ is_self_mov(struct ir3_instruction *instr)
+       return false;
+ 
+    if (instr->srcs[0]->flags &
+-       (IR3_REG_CONST | IR3_REG_IMMED | IR3_REG_RELATIV | IR3_REG_FNEG |
+-        IR3_REG_FABS | IR3_REG_SNEG | IR3_REG_SABS | IR3_REG_BNOT))
++       (IR3_REG_CONST | IR3_REG_IMMED | IR3_REG_RELATIV | IR3_REG_SRC_MODS))
+       return false;
+ 
+    return true;
+--- a/src/freedreno/ir3/ir3_rpt.c
++++ b/src/freedreno/ir3/ir3_rpt.c
+@@ -53,8 +53,7 @@ static enum ir3_register_flags
+ rpt_compatible_src_flags(struct ir3_register *src)
+ {
+    return src->flags &
+-          (IR3_REG_SABS | IR3_REG_SNEG | IR3_REG_FABS | IR3_REG_FNEG |
+-           IR3_REG_BNOT | IR3_REG_CONST | IR3_REG_IMMED | IR3_REG_SSA |
++          (IR3_REG_SRC_MODS | IR3_REG_CONST | IR3_REG_IMMED | IR3_REG_SSA |
+            IR3_REG_HALF | IR3_REG_SHARED);
+ }
+ 
+--- a/src/freedreno/ir3/ir3_cp.c
++++ b/src/freedreno/ir3/ir3_cp.c
+@@ -149,25 +149,8 @@ lower_immed(struct ir3_cp_ctx *ctx, struct ir3_instruction *instr, unsigned n,
+    /* in some cases, there are restrictions on (abs)/(neg) plus const..
+     * so just evaluate those and clear the flags:
+     */
+-   if (new_flags & IR3_REG_SABS) {
+-      reg->iim_val = abs(reg->iim_val);
+-      new_flags &= ~IR3_REG_SABS;
+-   }
+-
+-   if (new_flags & IR3_REG_FABS) {
+-      reg->fim_val = fabs(reg->fim_val);
+-      new_flags &= ~IR3_REG_FABS;
+-   }
+-
+-   if (new_flags & IR3_REG_SNEG) {
+-      reg->iim_val = -reg->iim_val;
+-      new_flags &= ~IR3_REG_SNEG;
+-   }
+-
+-   if (new_flags & IR3_REG_FNEG) {
+-      reg->fim_val = -reg->fim_val;
+-      new_flags &= ~IR3_REG_FNEG;
+-   }
++   reg->iim_val = ir3_evaluate_src_mods(reg->iim_val, new_flags);
++   new_flags &= ~IR3_REG_SRC_MODS;
+ 
+    reg->num = ir3_const_find_imm(ctx->so, reg->uim_val);
+ 
+@@ -492,14 +475,8 @@ reg_cp(struct ir3_cp_ctx *ctx, struct ir3_instruction *instr,
+             }
+          }
+ 
+-         if (new_flags & IR3_REG_SABS)
+-            iim_val = abs(iim_val);
+-
+-         if (new_flags & IR3_REG_SNEG)
+-            iim_val = -iim_val;
+-
+-         if (new_flags & IR3_REG_BNOT)
+-            iim_val = ~iim_val;
++         iim_val = ir3_evaluate_src_mods(
++            iim_val, new_flags & (IR3_REG_SABS | IR3_REG_SNEG | IR3_REG_BNOT));
+ 
+          if (ir3_valid_flags(instr, n, new_flags) &&
+              ir3_valid_immediate(instr, iim_val)) {
+--- a/src/freedreno/ir3/ir3_shader.c
++++ b/src/freedreno/ir3/ir3_shader.c
+@@ -74,6 +74,22 @@ ir3_const_imm_index_to_reg(const struct ir3_const_state *const_state,
+    return i + (4 * const_state->allocs.max_const_offset_vec4);
+ }
+ 
++int32_t
++ir3_evaluate_src_mods(int32_t val, unsigned flags)
++{
++   if (flags & IR3_REG_SABS)
++      val = abs(val);
++   if (flags & IR3_REG_FABS)
++      val = fui(fabs(uif((uint32_t)val)));
++   if (flags & IR3_REG_SNEG)
++      val = -val;
++   if (flags & IR3_REG_FNEG)
++      val = fui(-uif((uint32_t)val));
++   if (flags & IR3_REG_BNOT)
++      val = ~val;
++   return val;
++}
++
+ uint16_t
+ ir3_const_find_imm(struct ir3_shader_variant *v, uint32_t imm)
+ {
+--- a/src/freedreno/ir3/ir3_shader.h
++++ b/src/freedreno/ir3/ir3_shader.h
+@@ -1187,6 +1187,7 @@ ir3_max_const(const struct ir3_shader_variant *v)
+    return _ir3_max_const(v, v->key.safe_constlen);
+ }
+ 
++int32_t ir3_evaluate_src_mods(int32_t val, unsigned flags);
+ bool ir3_const_ensure_imm_size(struct ir3_shader_variant *v, unsigned size);
+ uint16_t ir3_const_imm_index_to_reg(const struct ir3_const_state *const_state,
+                                     unsigned i);
+--- a/src/freedreno/ir3/ir3_shader.c
++++ b/src/freedreno/ir3/ir3_shader.c
+@@ -79,12 +79,16 @@ ir3_evaluate_src_mods(int32_t val, unsigned flags)
+ {
+    if (flags & IR3_REG_SABS)
+       val = abs(val);
++   /* Note: Being careful to not flush float denorms and to preserve NaNs --
++    * source modifiers don't flush for mov and sel, even on a7xx where denorm
++    * float ALU input and outputs flush.
++    */
+    if (flags & IR3_REG_FABS)
+-      val = fui(fabs(uif((uint32_t)val)));
++      val &= 0x7fffffff;
+    if (flags & IR3_REG_SNEG)
+       val = -val;
+    if (flags & IR3_REG_FNEG)
+-      val = fui(-uif((uint32_t)val));
++      val ^= 0x80000000;
+    if (flags & IR3_REG_BNOT)
+       val = ~val;
+    return val;
+--- a/src/freedreno/ir3/ir3_shader.c
++++ b/src/freedreno/ir3/ir3_shader.c
+@@ -77,8 +77,14 @@ ir3_const_imm_index_to_reg(const struct ir3_const_state *const_state,
+ int32_t
+ ir3_evaluate_src_mods(int32_t val, unsigned flags)
+ {
+-   if (flags & IR3_REG_SABS)
+-      val = abs(val);
++   /* Note that src mods apply after CONSTANT_DEMOTION_ENABLE (f2f16/u2u16). */
++
++   if (flags & IR3_REG_SABS) {
++      if (flags & IR3_REG_HALF)
++         val = abs((int16_t)val);
++      else
++         val = abs(val);
++   }
+    /* Note: Being careful to not flush float denorms and to preserve NaNs --
+     * source modifiers don't flush for mov and sel, even on a7xx where denorm
+     * float ALU input and outputs flush.
+@@ -91,6 +97,12 @@ ir3_evaluate_src_mods(int32_t val, unsigned flags)
+       val ^= 0x80000000;
+    if (flags & IR3_REG_BNOT)
+       val = ~val;
++
++   /* Truncate down to 16 bits for ints */
++   if ((flags & IR3_REG_HALF) &&
++       (flags & (IR3_REG_SABS | IR3_REG_SNEG | IR3_REG_BNOT)))
++      val = val & 0xffff;
++
+    return val;
+ }
+ 
+--- a/src/freedreno/ir3/ir3_cp.c
++++ b/src/freedreno/ir3/ir3_cp.c
+@@ -133,7 +133,7 @@ lower_immed(struct ir3_cp_ctx *ctx, struct ir3_instruction *instr, unsigned n,
+    new_flags &= ~IR3_REG_IMMED;
+    new_flags |= IR3_REG_CONST;
+ 
+-   if (!ir3_valid_flags(instr, n, new_flags))
++   if (!ir3_valid_flags(instr, n, new_flags & ~IR3_REG_SRC_MODS))
+       return false;
+ 
+    reg = ir3_reg_clone(ctx->shader, reg);
+@@ -146,13 +146,13 @@ lower_immed(struct ir3_cp_ctx *ctx, struct ir3_instruction *instr, unsigned n,
+    if (f_opcode && (new_flags & IR3_REG_HALF))
+       reg->uim_val = fui(_mesa_half_to_float(reg->uim_val));
+ 
+-   /* in some cases, there are restrictions on (abs)/(neg) plus const..
+-    * so just evaluate those and clear the flags:
++   /* Strip off the src mods before we check if these flags are valid -- we'll
++    * re-add src mods as necessary to find an immediate.
+     */
+    reg->iim_val = ir3_evaluate_src_mods(reg->iim_val, new_flags);
+    new_flags &= ~IR3_REG_SRC_MODS;
+ 
+-   reg->num = ir3_const_find_imm(ctx->so, reg->uim_val);
++   reg->num = ir3_const_find_imm(ctx->so, instr, n, reg->iim_val, &new_flags);
+ 
+    if (reg->num == INVALID_CONST_REG) {
+       reg->num = ir3_const_add_imm(ctx->so, reg->uim_val);
+--- a/src/freedreno/ir3/ir3_shader.c
++++ b/src/freedreno/ir3/ir3_shader.c
+@@ -106,15 +106,45 @@ ir3_evaluate_src_mods(int32_t val, unsigned flags)
+    return val;
+ }
+ 
++/**
++ * Tries to find an existing value in the const file immediates list that we can
++ * reuse, given the set of source modifiers that are valid for the instruction.
++ */
+ uint16_t
+-ir3_const_find_imm(struct ir3_shader_variant *v, uint32_t imm)
++ir3_const_find_imm(struct ir3_shader_variant *v, struct ir3_instruction *instr,
++                   unsigned n, int32_t iim_val, unsigned *new_flags)
+ {
+    const struct ir3_const_state *const_state = ir3_const_state(v);
+    const struct ir3_imm_const_state *imm_state = &v->imm_state;
++   /* The caller should already have resolved these. */
++   assert(!(*new_flags & IR3_REG_SRC_MODS));
++
++   /* Note that we don't need to test for abs -- either the existing constant
++    * will give us what we're looking for when negated, or not.
++    */
++   static const unsigned float_mods[] = {
++      0,
++      IR3_REG_FNEG,
++   };
++   static const unsigned int_mods[] = {
++      0, IR3_REG_SNEG, IR3_REG_BNOT,
++   };
+ 
+-   for (unsigned i = 0; i < imm_state->count; i++) {
+-      if (imm_state->values[i] == imm)
+-         return ir3_const_imm_index_to_reg(const_state, i);
++   bool f_opcode = is_cat2_float(instr->opc) || is_cat3_float(instr->opc);
++
++   const unsigned *mods = f_opcode ? float_mods : int_mods;
++   unsigned num_mods = f_opcode ? ARRAY_SIZE(float_mods) : ARRAY_SIZE(int_mods);
++
++   for (unsigned i = 0; i < num_mods; i++) {
++      if (!ir3_valid_flags(instr, n, *new_flags | mods[i]))
++         continue;
++
++      for (unsigned j = 0; j < imm_state->count; j++) {
++         if (ir3_evaluate_src_mods(imm_state->values[j], mods[i]) == iim_val) {
++            *new_flags |= mods[i];
++            return ir3_const_imm_index_to_reg(const_state, j);
++         }
++      }
+    }
+ 
+    return INVALID_CONST_REG;
+--- a/src/freedreno/ir3/ir3_shader.h
++++ b/src/freedreno/ir3/ir3_shader.h
+@@ -1191,7 +1191,9 @@ int32_t ir3_evaluate_src_mods(int32_t val, unsigned flags);
+ bool ir3_const_ensure_imm_size(struct ir3_shader_variant *v, unsigned size);
+ uint16_t ir3_const_imm_index_to_reg(const struct ir3_const_state *const_state,
+                                     unsigned i);
+-uint16_t ir3_const_find_imm(struct ir3_shader_variant *v, uint32_t imm);
++uint16_t ir3_const_find_imm(struct ir3_shader_variant *v,
++                            struct ir3_instruction *instr, unsigned n,
++                            int32_t iim_val, unsigned *new_flags);
+ uint16_t ir3_const_add_imm(struct ir3_shader_variant *v, uint32_t imm);
+ 
+ static inline unsigned
+--- a/src/freedreno/ir3/ir3_nir.c
++++ b/src/freedreno/ir3/ir3_nir.c
+@@ -353,6 +353,7 @@ ir3_optimize_loop(struct ir3_compiler *compiler,
+       if (is_compute_or_frag(s->info.stage)) {
+          progress |= OPT(s, nir_opt_phi_precision);
+       }
++      progress |= OPT(s, nir_opt_fp_math_ctrl);
+       progress |= OPT(s, nir_opt_algebraic);
+       progress |= OPT(s, nir_lower_alu);
+       progress |= OPT(s, nir_lower_pack);
+--- a/src/freedreno/ir3/ir3_nir.c
++++ b/src/freedreno/ir3/ir3_nir.c
+@@ -402,6 +402,7 @@ ir3_optimize_loop(struct ir3_compiler *compiler,
+       }
+       progress |= OPT(s, nir_opt_if, nir_opt_if_optimize_phi_true_false);
+       progress |= OPT(s, nir_opt_loop_unroll);
++      progress |= OPT(s, nir_opt_phi_to_bool);
+       progress |= OPT(s, nir_opt_remove_phis);
+       progress |= OPT(s, nir_opt_undef);
+       did_progress |= progress;
+--- a/src/freedreno/ir3/ir3_nir.c
++++ b/src/freedreno/ir3/ir3_nir.c
+@@ -1725,6 +1725,7 @@ ir3_nir_lower_variant(struct ir3_shader_variant *so,
+          };
+          OPT(s, nir_opt_16bit_tex_image, &opt_16bit_options);
+       }
++      OPT(s, nir_opt_algebraic_distribute_src_mods);
+       OPT(s, nir_opt_constant_folding);
+       OPT(s, nir_opt_copy_prop);
+       OPT(s, nir_opt_dce);

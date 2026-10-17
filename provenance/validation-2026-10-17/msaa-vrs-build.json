@@ -1,0 +1,12 @@
+{
+  "variant": "msaa-vrs",
+  "mesaRevision": "48297c834466",
+  "sourcesPrepared": true,
+  "referenceDriverSha256": "d7cfb0b4df979c105a305a849ae9c6f6fd2af1a82f067317a7eec050a26d1764",
+  "patchCount": 33,
+  "compilerProfileSha256": "c222722529f8ea1d98b9a1e89a4c91ff96b3d7cd8c8bfafc6836c3f10bdafd2c",
+  "gpuValidated": false,
+  "compiled": true,
+  "driverSha256": "393f22e45bd4ec858bd972c4c3a12a3c48f24f2127909217d6a5060985b1faf6",
+  "byteIdenticalToReference": false
+}

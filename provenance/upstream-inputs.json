@@ -1,0 +1,51 @@
+[
+  {
+    "file": "mesa.tar.gz",
+    "url": "https://codeload.github.com/chaotic-cx/mesa-mirror/tar.gz/48297c834466",
+    "bytes": 110881136,
+    "sha256": "f94c8b5679aaade9e3f59b0ea937ab6c0481110b9263f8541191a9acac4e7d3c",
+    "sha1": "550cc6c87a70a5133f892250d87dc4bd062f48f4"
+  },
+  {
+    "file": "android-ndk-r27d-linux.zip",
+    "url": "https://dl.google.com/android/repository/android-ndk-r27d-linux.zip",
+    "bytes": 663956036,
+    "sha256": "601246087a682d1944e1e16dd85bc6e49560fe8b6d61255be2829178c8ed15d9",
+    "sha1": "22105e410cf29afcf163760cc95522b9fb981121"
+  },
+  {
+    "file": "0001-android-carry-Quest-3-KGSL-compatibility-patches.patch",
+    "url": "https://raw.githubusercontent.com/Jbbrack03/Quest-3-Turnip-Driver/83cd874f3449d091fca51d25389f88f520a7f2f3/0001-android-carry-Quest-3-KGSL-compatibility-patches.patch",
+    "bytes": 7408,
+    "sha256": "aefc041c1eb7780d059e2da57e1904b2e2913e832a1df4e8cef86bfd1f5f10b7",
+    "sha1": "fd87cbbce8ac7ee8ca93cbacc6092472d72b222b"
+  },
+  {
+    "file": "0002-android-remove-Eden-specific-debug-file-fallback.patch",
+    "url": "https://raw.githubusercontent.com/Jbbrack03/Quest-3-Turnip-Driver/83cd874f3449d091fca51d25389f88f520a7f2f3/0002-android-remove-Eden-specific-debug-file-fallback.patch",
+    "bytes": 1100,
+    "sha256": "b22ca9333aa4933589f9472d70f5e07246413826256fccfc31d7044393f10fce",
+    "sha1": "2417fba3bf24e8aa1524a1472916c67ee853d1a0"
+  },
+  {
+    "file": "0003-tu-support-coherent-host-memory-import-on-KGSL.patch",
+    "url": "https://raw.githubusercontent.com/Jbbrack03/Quest-3-Turnip-Driver/83cd874f3449d091fca51d25389f88f520a7f2f3/0003-tu-support-coherent-host-memory-import-on-KGSL.patch",
+    "bytes": 10971,
+    "sha256": "98074d9dc7808cec838aa3c9f8d81bb37d4d024ebd49b0cac95255b7b2a826da",
+    "sha1": "82bc42aaa5b7b1ebc61f1b42447c97aeda1ce785"
+  },
+  {
+    "file": "0004-tu-ir3-reject-corrupt-pipeline-cache-blobs.patch",
+    "url": "https://raw.githubusercontent.com/Jbbrack03/Quest-3-Turnip-Driver/83cd874f3449d091fca51d25389f88f520a7f2f3/0004-tu-ir3-reject-corrupt-pipeline-cache-blobs.patch",
+    "bytes": 7115,
+    "sha256": "747efe24572cff533427e932ee12177ca6376b61a76779a7d29416ec4221b3ed",
+    "sha1": "7d7da32cb29d2e4c5fcff8de1cdc5f7306e49fb1"
+  },
+  {
+    "file": "android-aarch64-cross.ini",
+    "url": "https://raw.githubusercontent.com/Jbbrack03/Quest-3-Turnip-Driver/83cd874f3449d091fca51d25389f88f520a7f2f3/android-aarch64-cross.ini",
+    "bytes": 729,
+    "sha256": "4375e6d410d57c14c6bbb55764b657302d4c3deee217a6bdcf743670bf2e0dce",
+    "sha1": "b4df85b743cc60113302a5064fca728ac21a6226"
+  }
+]

@@ -1,0 +1,12 @@
+--- a/src/freedreno/vulkan/tu_suballoc.cc
++++ b/src/freedreno/vulkan/tu_suballoc.cc
+@@ -92,6 +92,9 @@
+    VkResult result = tu_bo_map(suballoc->dev, suballoc->bo, NULL);
+    if (result != VK_SUCCESS) {
+       tu_bo_finish(suballoc->dev, suballoc->bo);
++      /* The released BO may have come from either a fresh allocation or the
++       * cached pool. Do not retain it for retry or allocator destruction. */
++      suballoc->bo = NULL;
+       return VK_ERROR_OUT_OF_HOST_MEMORY;
+    }
+ 

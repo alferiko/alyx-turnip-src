@@ -1,0 +1,64 @@
+--- a/src/freedreno/vulkan/tu_clear_blit.cc
++++ b/src/freedreno/vulkan/tu_clear_blit.cc
+@@ -4368,6 +4368,8 @@
+       tu6_emit_blit_consts_load(cmd, cs, CP_LOAD_STATE6_FRAG, SB6_FS_SHADER,
+                                 0, packed_clear_value, num_rts);
+ 
++   /* The caller may already own a writable conditional scope. */
++   const bool was_writeable = cs->writeable;
+    if (cmd->state.fdm_enabled)
+       tu_cs_set_writeable(cs, true);
+ 
+@@ -4426,7 +4428,7 @@
+    }
+ 
+    if (cmd->state.fdm_enabled)
+-      tu_cs_set_writeable(cs, false);
++      tu_cs_set_writeable(cs, was_writeable);
+ 
+    trace_end_sysmem_clear_all(&cmd->rp_trace, cs);
+ }
+@@ -4589,6 +4591,8 @@
+ 
+    struct tu_resolve_group resolve_group = {};
+ 
++   /* The caller may already own a writable conditional scope. */
++   const bool was_writeable = cs->writeable;
+    if (cmd->state.fdm_enabled)
+       tu_cs_set_writeable(cs, true);
+ 
+@@ -4640,7 +4644,7 @@
+    tu_emit_resolve_group<CHIP>(cmd, cs, &resolve_group);
+ 
+    if (cmd->state.fdm_enabled)
+-      tu_cs_set_writeable(cs, false);
++      tu_cs_set_writeable(cs, was_writeable);
+ }
+ 
+ template <chip CHIP>
+@@ -4696,6 +4700,15 @@
+       }
+    }
+ 
++   /* FDM clear helpers emit writable per-bin patchpoints. Switching BO
++    * type inside a conditional scope splits its header from the body and
++    * is forbidden by tu_cs_set_writeable(). Keep both branches within the
++    * same writable stream; helpers must preserve this ownership.
++    */
++   const bool was_writeable = cs->writeable;
++   if (cmd->state.fdm_enabled)
++      tu_cs_set_writeable(cs, true);
++
+    /* Otherwise, emit 2D blits for gmem rendering. */
+    tu_cond_exec_start(cs, CP_COND_EXEC_0_RENDER_MODE_GMEM);
+    tu_clear_gmem_attachments<CHIP>(cmd, attachmentCount, pAttachments, rectCount, pRects);
+@@ -4704,6 +4717,9 @@
+    tu_cond_exec_start(cs, CP_COND_EXEC_0_RENDER_MODE_SYSMEM);
+    tu_clear_sysmem_attachments<CHIP>(cmd, attachmentCount, pAttachments, rectCount, pRects);
+    tu_cond_exec_end(cs);
++
++   if (cmd->state.fdm_enabled)
++      tu_cs_set_writeable(cs, was_writeable);
+ }
+ 
+ static void

@@ -1,0 +1,54 @@
+APK: Alyx-Jailbreak-release-universal-main-v907-test.apk
+Version: 0.179-universal.907-test (907), minSdk/targetSdk 29
+SHA256: 8642e035f8ac8d4bd0dc8b76985995ac59a5139a7a434c7579f386addcfdded7
+Source: main 44a58ac6089c6326130107db7565c84f86461b01 plus local audit/preset fixes.
+Patch: ../staff/build/universal-v907-device-tests/source-changes.patch
+Build: ./build-universal-test.ps1 -Tag release-universal-main-v907-test -VersionCode 907
+
+Fixes included:
+Quest-only native gates for MQSR compositor settings, DRS and Touch Plus/Pro.
+PICO refresh/MQSR UI status and MSAA/VRS description corrected.
+Public Quality preset normalizes unavailable temporal AA to SMAA soft before
+applying preset history; spinner also normalizes legacy saved AA selections.
+Regression checks cover every public preset, spinner callback and history
+restoration, while preserving temporal AA in non-public builds.
+
+Checks passed:
+Seven Java test groups, public/universal APK checks, signed APK verification,
+6660 frozen source hashes, current main runtime bytes, native API29 imports.
+Only the three AA host libraries differ from v893; pinned driver/import layer retained.
+
+Device procedure:
+Update installed package with adb install -r, retaining all application data.
+Select modes through ordinary release launcher UI. Continue s9/steamvr_quit.
+Capture tagged logcat, native constructor trace, generated game config,
+process lifetime and both-eye screenshot for every scenario.
+Tests cover short stationary scene launch/load/rendering. They do not establish
+extended gameplay, physical controller interaction, thermal stability or all
+possible setting combinations. Other headset models are not physically tested.
+Evidence: ../staff/build/universal-v907-device-tests/
+
+Device results on Quest 3, final APK v907 (all PASS launch/load/render):
+01 Quality: SMAA soft correctly selected, 85%; game process alive 56 s.
+02 Off + VRS: game process alive 49 s.
+03 MSAA2 + MQSR: game process alive 55 s.
+04 SMAA Medium, no reprojection/VRS/MQSR: game process alive 62 s.
+05 SMAA Ultra + DRS + VRS + MQSR: game process alive 49 s.
+06 Performance: 50%, SMAA soft, heavy/low-memory off; game alive 47 s.
+07 Extreme: 50%, SMAA soft, heavy/low-memory on; game alive 47 s.
+08 Restored original settings: game process alive 51 s.
+Every scene screenshot was visually inspected; both eyes rendered the level.
+No fatal crash markers found in captured logs. Touch attach succeeded in each run.
+Stationary observation is not a full controller/gameplay or DRS adaptation test.
+
+Original effective settings restored: 85%, SMAA soft, basic reprojection,
+MQSR OFF, VRS ON, linear scaling, texture limit 1024, saved mip/pool 0,
+render acceleration and all original reduction/memory options ON.
+The generated game config is byte-identical to the pre-test snapshot:
+SHA256 206dae1d29f9a61d291fc199b95282ed645d56ef69c965825097162d64983f69
+Final application state: launcher, game stopped after successful test.
+
+Observed nonfatal diagnostic: local asset inventory does not match the bundled
+pipeline catalog (vpk-inventory-mismatch); selective-precompile fallback
+completed successfully (ready=1, error=none, driverResult=0). No claim of full
+level shader coverage or absence of later shader compilation is made.

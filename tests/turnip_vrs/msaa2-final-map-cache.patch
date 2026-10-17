@@ -1,0 +1,73 @@
+--- a/src/freedreno/vulkan/tu_alyx_fdm_vrs.h
++++ b/src/freedreno/vulkan/tu_alyx_fdm_vrs.h
+@@ -64,6 +64,17 @@
+    return { a.x < b.x ? a.x : b.x, a.y < b.y ? a.y : b.y };
+ }
+ inline uint8_t encode(Rate r) { return uint8_t((r.x << 2) | r.y); }
++// Preserve the exact existing MSAA2 rate cap. Called only on cache misses;
++// cache hits copy the final map and never read/modify GPU-mapped output bytes.
++inline void clamp_msaa2(uint8_t *map, uint32_t bytes)
++{
++   for (uint32_t i = 0; i < bytes; ++i) {
++      unsigned x = (map[i] >> 2) & 3, y = map[i] & 3;
++      y = y < 1u ? y : 1u;
++      x = x < (y ? 2u : 1u) ? x : (y ? 2u : 1u);
++      map[i] = uint8_t((x << 2) | y);
++   }
++}
+ struct Offset { int32_t x, y; };
+ /* CPU-only, exact-content LRU. The caller serializes access. No image handles,
+  * mappings or command-buffer allocations survive a lookup. A hit still copies
+@@ -71,8 +82,9 @@
+ struct CacheKey {
+    uint32_t width, height, source_width, source_height, layers, shift_x, shift_y, mode;
+    Offset offsets[2];
++   uint32_t samples = 1; // Final cached map is specific to the sample count.
+ };
+-static_assert(sizeof(CacheKey) == 12 * sizeof(uint32_t), "canonical cache key");
++static_assert(sizeof(CacheKey) == 13 * sizeof(uint32_t), "canonical cache key");
+ struct CacheSource {
+    const uint8_t *data;
+    uint64_t bytes, pitch, layer_stride;
+@@ -93,7 +105,7 @@
+    void clear() { for (auto &entry : entries) erase(entry); }
+    static bool valid(const CacheKey &key, const CacheSource &source, const Layout &l) {
+       Layout expected{};
+-      if (!source.data || !key.source_width || key.source_width > 512 ||
++      if ((key.samples != 1 && key.samples != 2) || !source.data || !key.source_width || key.source_width > 512 ||
+           !key.source_height || key.source_height > 512 || key.shift_x > 31 || key.shift_y > 31 ||
+           (key.mode != Control && key.mode != Union) ||
+           !layout(key.width, key.height, key.layers, &expected) || memcmp(&l, &expected, sizeof(l)))
+--- a/src/freedreno/vulkan/tu_alyx_fdm_vrs.inc
++++ b/src/freedreno/vulkan/tu_alyx_fdm_vrs.inc
+@@ -127,6 +127,7 @@
+    cache_key.shift_x = shift_x;
+    cache_key.shift_y = shift_y;
+    cache_key.mode = alyx_vrs::mode();
++   cache_key.samples = cmd->state.subpass->samples;
+    for (unsigned i = 0; i < count; ++i) cache_key.offsets[i] = offsets[i];
+    const alyx_vrs::CacheSource source = {
+       (const uint8_t *)fdm->image->map + fdm->view.offset,
+@@ -158,20 +159,11 @@
+             cmd->state.framebuffer->width, cmd->state.framebuffer->height, layer, &area);
+          return alyx_vrs::rate(area.width, area.height);
+       });
++      if (cache_key.samples == VK_SAMPLE_COUNT_2_BIT)
++         alyx_vrs::clamp_msaa2(state.map, state.layout.bytes);
+       if (cacheable) {
+          std::lock_guard<std::mutex> lock(alyx_vrs_cache_mutex);
+          alyx_vrs_cache.store(cache_key, source, state.layout, state.map);
+-      }
+-   }
+-   /* Cache stores the original map, shared by all sample counts. Clamp only
+-    * the command buffer copy: A740 MSAA2 supports at most 4x2, and 4x1/2x4
+-    * must conservatively become 2x1/2x2. Never broaden a sharp source cell. */
+-   if (cmd->state.subpass->samples == VK_SAMPLE_COUNT_2_BIT) {
+-      for (unsigned i = 0; i < state.layout.bytes; ++i) {
+-         unsigned x = (state.map[i] >> 2) & 3, y = state.map[i] & 3;
+-         y = MIN2(y, 1u);
+-         x = MIN2(x, y ? 2u : 1u);
+-         state.map[i] = (x << 2) | y;
+       }
+    }
+    /* Bounded evidence of actual accepted passes and generated rates. This is

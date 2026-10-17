@@ -1,0 +1,16 @@
+{
+  "name": "Alyx Turnip",
+  "snapshotDate": "2026-10-17",
+  "sourceProjectCommit": "b100753c6fe6ee1d5c370bc8ab8eae1d5b1bd84a",
+  "mesaRevision": "48297c834466",
+  "mesaArchiveSha256": "f94c8b5679aaade9e3f59b0ea937ab6c0481110b9263f8541191a9acac4e7d3c",
+  "questPatchRepository": "https://github.com/Jbbrack03/Quest-3-Turnip-Driver",
+  "questPatchRevision": "83cd874f3449d091fca51d25389f88f520a7f2f3",
+  "baselinePatchSha256": "2c7b0cfde21ef3fdaffd4858f712185f739f0b1d021f29137f32ddf43c65f2b8",
+  "driverSha256": "1559bf7493ae397c274c9743befcbcc4bd6cfd6e1232f4f41f0f45e5374c25bb",
+  "profileSha256": "c222722529f8ea1d98b9a1e89a4c91ff96b3d7cd8c8bfafc6836c3f10bdafd2c",
+  "baselineChangedFiles": 12,
+  "driverPatches": 32,
+  "defaultVariant": "compat",
+  "variantsManifest": "provenance/variants.json"
+}
